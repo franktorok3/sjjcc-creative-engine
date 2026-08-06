@@ -3,13 +3,20 @@ import {
   CanvaAuthError,
   exchangeAuthorizationCode,
 } from "@/lib/canva/oauth";
+import {
+  attachOptionalTokenExport,
+  isOauthTokenExportEnabled,
+  withOauthCallbackHeaders,
+} from "@/lib/creative/oauth-export";
 
 export const runtime = "nodejs";
 
 /**
  * Canva OAuth callback. Exchanges authorization code for tokens.
- * On Vercel, returns tokens once so they can be pasted into env vars
- * (filesystem token store is ephemeral across serverless instances).
+ *
+ * Temporary PoC: when OAUTH_EXPORT_TOKENS=1, includes vercelEnv token values
+ * once so they can be pasted into Vercel env (filesystem is ephemeral).
+ * Disable the flag after copying. Never logs token values.
  */
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -41,21 +48,29 @@ export async function GET(request: Request) {
 
   try {
     const tokens = await exchangeAuthorizationCode(code, state);
-    return NextResponse.json({
-      success: true,
-      message:
-        "Canva OAuth complete. On Vercel, paste tokens below into Project → Settings → Environment Variables, then redeploy. Local filesystem token storage is ephemeral on serverless.",
-      // PoC only — required because Vercel cannot persist .data/ across instances.
-      vercelEnv: {
+    const exportEnabled = isOauthTokenExportEnabled();
+
+    const body = attachOptionalTokenExport(
+      {
+        success: true as const,
+        message: exportEnabled
+          ? "Canva OAuth complete. Temporary token export is enabled — copy vercelEnv into Vercel, then set OAUTH_EXPORT_TOKENS off and redeploy."
+          : "Canva OAuth complete. Token export is disabled (set OAUTH_EXPORT_TOKENS=1 only while copying tokens into Vercel env).",
+        nextSteps: [
+          "If needed, set OAUTH_EXPORT_TOKENS=1, reconnect, copy CANVA_ACCESS_TOKEN + CANVA_REFRESH_TOKEN into Vercel, then disable the flag.",
+          "GET /api/test/canva/templates and set CANVA_BRAND_TEMPLATE_ID.",
+          "GET /api/test/canva/template-dataset and update config/form-to-canva.ts.",
+        ],
+        expiresAt: new Date(tokens.expiresAt).toISOString(),
+      },
+      {
         CANVA_ACCESS_TOKEN: tokens.accessToken,
         CANVA_REFRESH_TOKEN: tokens.refreshToken,
       },
-      nextSteps: [
-        "Add CANVA_ACCESS_TOKEN + CANVA_REFRESH_TOKEN to Vercel env, then redeploy.",
-        "GET /api/test/canva/templates and set CANVA_BRAND_TEMPLATE_ID.",
-        "GET /api/test/canva/template-dataset and update config/form-to-canva.ts.",
-      ],
-      expiresAt: new Date(tokens.expiresAt).toISOString(),
+    );
+
+    return NextResponse.json(body, {
+      headers: withOauthCallbackHeaders(exportEnabled),
     });
   } catch (err) {
     if (err instanceof CanvaAuthError) {

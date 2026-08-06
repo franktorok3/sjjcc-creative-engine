@@ -1,8 +1,8 @@
 import "server-only";
 import { loadBasecampTokens, saveBasecampTokens } from "./token-store";
 import {
-  createSignedOauthState,
-  parseSignedOauthState,
+  createEncryptedOauthState,
+  parseEncryptedOauthState,
 } from "@/lib/creative/oauth-state";
 import type { BasecampAuthorization, BasecampTokenSet } from "./types";
 
@@ -38,8 +38,8 @@ function requireBasecampAppConfig() {
 
 export function buildBasecampAuthorizeUrl(): string {
   const { clientId, redirectUri } = requireBasecampAppConfig();
-  // Stateless signed state — required on Vercel (no shared in-memory session).
-  const state = createSignedOauthState();
+  // Stateless encrypted state — required on Vercel (no shared in-memory session).
+  const state = createEncryptedOauthState({ provider: "basecamp" });
 
   const params = new URLSearchParams({
     response_type: "code",
@@ -105,7 +105,7 @@ export async function exchangeBasecampAuthorizationCode(
   const { clientId, clientSecret, redirectUri } = requireBasecampAppConfig();
 
   try {
-    parseSignedOauthState(state);
+    parseEncryptedOauthState(state, { expectedProvider: "basecamp" });
   } catch {
     throw new BasecampAuthError(
       "BASECAMP_OAUTH_STATE_INVALID",

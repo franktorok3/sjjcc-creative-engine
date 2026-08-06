@@ -2,8 +2,8 @@ import "server-only";
 import { createHash, randomBytes } from "crypto";
 import { loadCanvaTokens, saveCanvaTokens } from "./token-store";
 import {
-  createSignedOauthState,
-  parseSignedOauthState,
+  createEncryptedOauthState,
+  parseEncryptedOauthState,
 } from "@/lib/creative/oauth-state";
 import { CANVA_REQUIRED_SCOPES, type CanvaTokenSet } from "./types";
 
@@ -57,8 +57,11 @@ export async function buildCanvaAuthorizeUrl(): Promise<string> {
   const { clientId, redirectUri } = requireCanvaAppConfig();
   const codeVerifier = createCodeVerifier();
   const codeChallenge = createCodeChallenge(codeVerifier);
-  // Stateless signed state — required on Vercel (no shared in-memory session).
-  const state = createSignedOauthState({ codeVerifier });
+  // Stateless encrypted state — required on Vercel (no shared in-memory session).
+  const state = createEncryptedOauthState({
+    provider: "canva",
+    codeVerifier,
+  });
 
   const params = new URLSearchParams({
     code_challenge: codeChallenge,
@@ -132,8 +135,10 @@ export async function exchangeAuthorizationCode(
 
   let codeVerifier: string | undefined;
   try {
-    const payload = parseSignedOauthState(state);
-    codeVerifier = payload.v;
+    const payload = parseEncryptedOauthState(state, {
+      expectedProvider: "canva",
+    });
+    codeVerifier = payload.codeVerifier;
   } catch {
     throw new CanvaAuthError(
       "CANVA_OAUTH_STATE_INVALID",

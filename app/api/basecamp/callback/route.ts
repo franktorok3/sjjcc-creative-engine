@@ -5,13 +5,20 @@ import {
   fetchBasecampAuthorization,
   resolveBasecampAccountId,
 } from "@/lib/basecamp/oauth";
+import {
+  attachOptionalTokenExport,
+  isOauthTokenExportEnabled,
+  withOauthCallbackHeaders,
+} from "@/lib/creative/oauth-export";
 
 export const runtime = "nodejs";
 
 /**
  * Basecamp OAuth callback. Exchanges authorization code for tokens.
- * On Vercel, returns tokens once so they can be pasted into env vars
- * (filesystem token store is ephemeral across serverless instances).
+ *
+ * Temporary PoC: when OAUTH_EXPORT_TOKENS=1, includes vercelEnv token values
+ * once so they can be pasted into Vercel env (filesystem is ephemeral).
+ * Disable the flag after copying. Never logs token values.
  */
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -45,32 +52,39 @@ export async function GET(request: Request) {
     const tokens = await exchangeBasecampAuthorizationCode(code, state);
     const authorization = await fetchBasecampAuthorization(tokens.accessToken);
     const resolvedAccountId = resolveBasecampAccountId(authorization);
+    const exportEnabled = isOauthTokenExportEnabled();
 
-    return NextResponse.json({
-      success: true,
-      message:
-        "Basecamp OAuth complete. On Vercel, paste tokens below into Project → Settings → Environment Variables, then redeploy. Local filesystem token storage is ephemeral on serverless.",
-      identity: authorization.identity ?? null,
-      resolvedAccountId,
-      accounts: (authorization.accounts ?? []).map((account) => ({
-        id: account.id,
-        name: account.name,
-        product: account.product,
-        href: account.href,
-        app_href: account.app_href,
-      })),
-      // PoC only — required because Vercel cannot persist .data/ across instances.
-      vercelEnv: {
+    const body = attachOptionalTokenExport(
+      {
+        success: true as const,
+        message: exportEnabled
+          ? "Basecamp OAuth complete. Temporary token export is enabled — copy vercelEnv into Vercel, then set OAUTH_EXPORT_TOKENS off and redeploy."
+          : "Basecamp OAuth complete. Token export is disabled (set OAUTH_EXPORT_TOKENS=1 only while copying tokens into Vercel env).",
+        identity: authorization.identity ?? null,
+        resolvedAccountId,
+        accounts: (authorization.accounts ?? []).map((account) => ({
+          id: account.id,
+          name: account.name,
+          product: account.product,
+          href: account.href,
+          app_href: account.app_href,
+        })),
+        nextSteps: [
+          "If needed, set OAUTH_EXPORT_TOKENS=1, reconnect, copy BASECAMP_ACCESS_TOKEN (+ REFRESH_TOKEN) and BASECAMP_ACCOUNT_ID into Vercel, then disable the flag.",
+          "GET /api/test/basecamp/projects to list projects.",
+          "GET /api/test/basecamp/project?projectId=... and set BASECAMP_MESSAGE_BOARD_ID from messageBoardId.",
+        ],
+        expiresAt: new Date(tokens.expiresAt).toISOString(),
+      },
+      {
         BASECAMP_ACCESS_TOKEN: tokens.accessToken,
         BASECAMP_REFRESH_TOKEN: tokens.refreshToken || null,
         BASECAMP_ACCOUNT_ID: resolvedAccountId,
       },
-      nextSteps: [
-        "Add BASECAMP_ACCESS_TOKEN (+ REFRESH_TOKEN) and BASECAMP_ACCOUNT_ID to Vercel env, then redeploy.",
-        "GET /api/test/basecamp/projects to list projects.",
-        "GET /api/test/basecamp/project?projectId=... and set BASECAMP_MESSAGE_BOARD_ID from messageBoardId.",
-      ],
-      expiresAt: new Date(tokens.expiresAt).toISOString(),
+    );
+
+    return NextResponse.json(body, {
+      headers: withOauthCallbackHeaders(exportEnabled),
     });
   } catch (err) {
     if (err instanceof BasecampAuthError) {
