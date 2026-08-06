@@ -117,7 +117,13 @@ See `docs/google-form-trigger.gs` header comments:
 2. Set `BASECAMP_CLIENT_ID` / `BASECAMP_CLIENT_SECRET` and add redirect URI matching `BASECAMP_REDIRECT_URI`.
 3. Visit `/api/basecamp/connect` (or set `BASECAMP_ACCESS_TOKEN` + `BASECAMP_REFRESH_TOKEN`).
 4. From the callback JSON, note `resolvedAccountId` → set `BASECAMP_ACCOUNT_ID` if you want to pin it.
-5. Set `BASECAMP_MESSAGE_BOARD_ID` for the target message board (Pulse board).
+5. Set `BASECAMP_MESSAGE_BOARD_ID` for the target message board (Pulse board), or discover it:
+
+```bash
+curl -s "$APP/api/test/basecamp/projects" | jq
+curl -s "$APP/api/test/basecamp/project?projectId=PROJECT_ID" | jq '.messageBoardId'
+```
+
 6. Set `BASECAMP_USER_AGENT` to identify the integration + contact email.
 
 If no access token is available, the API returns `BASECAMP_AUTH_REQUIRED` — it will **not** fake success.
@@ -183,7 +189,10 @@ curl -s -X POST "$APP/api/test/canva/autofill" \
 ```bash
 # If no tokens yet:
 open "$APP/api/basecamp/connect"
-# Then:
+# Discover board id (optional, before MESSAGE_BOARD_ID is set):
+curl -s "$APP/api/test/basecamp/projects" | jq '.projects'
+curl -s "$APP/api/test/basecamp/project?projectId=YOUR_PROJECT_ID" | jq
+# Then verify configured board:
 curl -s "$APP/api/test/basecamp" | jq
 ```
 

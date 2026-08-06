@@ -48,6 +48,8 @@ Open http://localhost:3000
 | GET | `/api/test/canva/template-dataset` | Dataset fields for configured template |
 | POST | `/api/test/canva/autofill` | Create one autofilled design |
 | GET/POST | `/api/test/basecamp` | Auth check / TEST message |
+| GET | `/api/test/basecamp/projects` | List projects (discover boards) |
+| GET | `/api/test/basecamp/project` | Message Board id for `?projectId=` |
 | POST | `/api/form-submit` | Full Form → Canva → Basecamp webhook |
 
 ## Field mapping

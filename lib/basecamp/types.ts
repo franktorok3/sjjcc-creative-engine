@@ -39,3 +39,38 @@ export type BasecampAuthorization = {
   };
   accounts?: BasecampAuthorizationAccount[];
 };
+
+export type BasecampDockEntry = {
+  id: number | string;
+  title?: string;
+  name?: string;
+  enabled?: boolean;
+  position?: number | null;
+  url?: string;
+  app_url?: string;
+};
+
+export type BasecampProject = {
+  id: number | string;
+  name?: string;
+  status?: string;
+  url?: string;
+  app_url?: string;
+  dock?: BasecampDockEntry[];
+};
+
+/** Safe discovery DTO — never includes tokens or secrets. */
+export type BasecampProjectSummary = {
+  id: string;
+  name: string;
+  appUrl: string;
+};
+
+/** Safe discovery DTO for the project's Message Board dock entry. */
+export type BasecampMessageBoardDiscovery = {
+  projectId: string;
+  projectName: string;
+  messageBoardId: string;
+  messageBoardTitle: string;
+  messageBoardUrl: string;
+};
