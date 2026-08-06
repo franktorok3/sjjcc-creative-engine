@@ -1,11 +1,9 @@
 import "server-only";
-import { randomBytes } from "crypto";
+import { loadBasecampTokens, saveBasecampTokens } from "./token-store";
 import {
-  consumeBasecampOauthSession,
-  loadBasecampTokens,
-  saveBasecampTokens,
-  storeBasecampOauthSession,
-} from "./token-store";
+  createSignedOauthState,
+  parseSignedOauthState,
+} from "@/lib/creative/oauth-state";
 import type { BasecampAuthorization, BasecampTokenSet } from "./types";
 
 const BASECAMP_AUTH_URL = "https://launchpad.37signals.com/authorization/new";
@@ -40,8 +38,8 @@ function requireBasecampAppConfig() {
 
 export function buildBasecampAuthorizeUrl(): string {
   const { clientId, redirectUri } = requireBasecampAppConfig();
-  const state = randomBytes(32).toString("base64url");
-  storeBasecampOauthSession({ state, createdAt: Date.now() });
+  // Stateless signed state — required on Vercel (no shared in-memory session).
+  const state = createSignedOauthState();
 
   const params = new URLSearchParams({
     response_type: "code",
@@ -105,9 +103,10 @@ export async function exchangeBasecampAuthorizationCode(
   state: string,
 ): Promise<BasecampTokenSet> {
   const { clientId, clientSecret, redirectUri } = requireBasecampAppConfig();
-  const session = consumeBasecampOauthSession(state);
 
-  if (!session) {
+  try {
+    parseSignedOauthState(state);
+  } catch {
     throw new BasecampAuthError(
       "BASECAMP_OAUTH_STATE_INVALID",
       "Invalid or expired OAuth state. Restart /api/basecamp/connect.",

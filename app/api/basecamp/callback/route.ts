@@ -9,8 +9,9 @@ import {
 export const runtime = "nodejs";
 
 /**
- * Basecamp OAuth callback. Exchanges authorization code for tokens
- * and returns available accounts so BASECAMP_ACCOUNT_ID can be set.
+ * Basecamp OAuth callback. Exchanges authorization code for tokens.
+ * On Vercel, returns tokens once so they can be pasted into env vars
+ * (filesystem token store is ephemeral across serverless instances).
  */
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -48,7 +49,7 @@ export async function GET(request: Request) {
     return NextResponse.json({
       success: true,
       message:
-        "Basecamp OAuth complete. Tokens stored locally (.data/basecamp-tokens.enc). On Vercel, copy access/refresh tokens into env — filesystem is ephemeral.",
+        "Basecamp OAuth complete. On Vercel, paste tokens below into Project → Settings → Environment Variables, then redeploy. Local filesystem token storage is ephemeral on serverless.",
       identity: authorization.identity ?? null,
       resolvedAccountId,
       accounts: (authorization.accounts ?? []).map((account) => ({
@@ -58,17 +59,18 @@ export async function GET(request: Request) {
         href: account.href,
         app_href: account.app_href,
       })),
-      nextSteps: [
-        "Set BASECAMP_ACCOUNT_ID to resolvedAccountId (or another account id below).",
-        "Set BASECAMP_MESSAGE_BOARD_ID to the Pulse (or target) message board id.",
-        "Optionally set BASECAMP_ACCESS_TOKEN + BASECAMP_REFRESH_TOKEN from the encrypted store for Vercel.",
-        "Then GET /api/test/basecamp to verify.",
-      ],
-      tokenHint: {
-        accessTokenSet: Boolean(tokens.accessToken),
-        refreshTokenSet: Boolean(tokens.refreshToken),
-        expiresAt: new Date(tokens.expiresAt).toISOString(),
+      // PoC only — required because Vercel cannot persist .data/ across instances.
+      vercelEnv: {
+        BASECAMP_ACCESS_TOKEN: tokens.accessToken,
+        BASECAMP_REFRESH_TOKEN: tokens.refreshToken || null,
+        BASECAMP_ACCOUNT_ID: resolvedAccountId,
       },
+      nextSteps: [
+        "Add BASECAMP_ACCESS_TOKEN (+ REFRESH_TOKEN) and BASECAMP_ACCOUNT_ID to Vercel env, then redeploy.",
+        "GET /api/test/basecamp/projects to list projects.",
+        "GET /api/test/basecamp/project?projectId=... and set BASECAMP_MESSAGE_BOARD_ID from messageBoardId.",
+      ],
+      expiresAt: new Date(tokens.expiresAt).toISOString(),
     });
   } catch (err) {
     if (err instanceof BasecampAuthError) {

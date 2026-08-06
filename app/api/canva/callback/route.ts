@@ -7,10 +7,9 @@ import {
 export const runtime = "nodejs";
 
 /**
- * Canva OAuth callback. Exchanges authorization code for tokens
- * and persists them to the local encrypted credential store.
- *
- * Vercel note: filesystem persistence is ephemeral — use an external store in production.
+ * Canva OAuth callback. Exchanges authorization code for tokens.
+ * On Vercel, returns tokens once so they can be pasted into env vars
+ * (filesystem token store is ephemeral across serverless instances).
  */
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -41,11 +40,22 @@ export async function GET(request: Request) {
   }
 
   try {
-    await exchangeAuthorizationCode(code, state);
+    const tokens = await exchangeAuthorizationCode(code, state);
     return NextResponse.json({
       success: true,
       message:
-        "Canva OAuth complete. Tokens stored in the local encrypted credential store (.data/canva-tokens.enc). On Vercel, configure an external token store — local filesystem is ephemeral.",
+        "Canva OAuth complete. On Vercel, paste tokens below into Project → Settings → Environment Variables, then redeploy. Local filesystem token storage is ephemeral on serverless.",
+      // PoC only — required because Vercel cannot persist .data/ across instances.
+      vercelEnv: {
+        CANVA_ACCESS_TOKEN: tokens.accessToken,
+        CANVA_REFRESH_TOKEN: tokens.refreshToken,
+      },
+      nextSteps: [
+        "Add CANVA_ACCESS_TOKEN + CANVA_REFRESH_TOKEN to Vercel env, then redeploy.",
+        "GET /api/test/canva/templates and set CANVA_BRAND_TEMPLATE_ID.",
+        "GET /api/test/canva/template-dataset and update config/form-to-canva.ts.",
+      ],
+      expiresAt: new Date(tokens.expiresAt).toISOString(),
     });
   } catch (err) {
     if (err instanceof CanvaAuthError) {
