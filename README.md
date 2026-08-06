@@ -1,36 +1,82 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# SJJCC Creative Engine
 
-## Getting Started
+Standalone proof-of-concept: **Google Form → Canva Brand Template Autofill → Basecamp Message Board**.
 
-First, run the development server:
+This is a thin test harness, not a production workflow system. No AI generation, approval flows, user management, or generic workflow builders.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+## Architecture
+
+```text
+Google Form
+  → linked response Google Sheet
+  → Apps Script installable onFormSubmit
+  → POST /api/form-submit  (X-Webhook-Secret)
+  → Canva Connect Brand Template Autofill (async poll)
+  → editable Canva design URL
+  → Basecamp Message Board post
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Stack
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+- Next.js App Router + TypeScript
+- pnpm
+- Zod
+- Vitest
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Local setup
 
-## Learn More
+```bash
+cp .env.example .env.local
+# fill Canva, Basecamp, and GOOGLE_FORM_WEBHOOK_SECRET
 
-To learn more about Next.js, take a look at the following resources:
+pnpm install
+pnpm dev
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Open http://localhost:3000
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## API routes
 
-## Deploy on Vercel
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/api/health` | Liveness |
+| GET | `/api/canva/connect` | Start Canva OAuth (PKCE) |
+| GET | `/api/canva/callback` | OAuth callback / token store |
+| GET | `/api/test/canva/templates` | Auth check + list brand templates |
+| GET | `/api/test/canva/template-dataset` | Dataset fields for configured template |
+| POST | `/api/test/canva/autofill` | Create one autofilled design |
+| GET/POST | `/api/test/basecamp` | Auth check / TEST message |
+| POST | `/api/form-submit` | Full Form → Canva → Basecamp webhook |
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Field mapping
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Edit `config/form-to-canva.ts` **after** inspecting the live template dataset:
+
+```bash
+curl -s http://localhost:3000/api/test/canva/template-dataset | jq
+```
+
+Do not guess Canva autofill field names.
+
+## Google Apps Script
+
+See `docs/google-form-trigger.gs`.
+
+## Token persistence
+
+Local OAuth tokens are encrypted in `.data/canva-tokens.enc` (gitignored).
+
+**On Vercel, the local filesystem is ephemeral and not shared across instances.** Do not rely on it for production token persistence — use an external store (DB / KV / secrets manager). Env-provided `CANVA_ACCESS_TOKEN` + `CANVA_REFRESH_TOKEN` work for short local tests.
+
+## Dev commands
+
+```bash
+pnpm lint
+pnpm typecheck
+pnpm test
+pnpm build
+```
+
+## Quick test sequence
+
+See **[QUICK_TEST.md](./QUICK_TEST.md)** — run TEST 1 → TEST 8 in order; stop on first failure.
