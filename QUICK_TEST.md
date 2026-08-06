@@ -24,10 +24,14 @@ CANVA_ACCESS_TOKEN=          # optional if using /api/canva/connect
 CANVA_REFRESH_TOKEN=         # optional if using /api/canva/connect
 # CREDENTIAL_ENCRYPTION_KEY= # recommended for local encrypted token store
 
-# Basecamp
-BASECAMP_ACCESS_TOKEN=
-BASECAMP_ACCOUNT_ID=
-BASECAMP_MESSAGE_BOARD_ID=
+# Basecamp / 37signals Launchpad OAuth app
+BASECAMP_CLIENT_ID=
+BASECAMP_CLIENT_SECRET=
+BASECAMP_REDIRECT_URI=http://localhost:3000/api/basecamp/callback
+BASECAMP_ACCESS_TOKEN=          # optional if using /api/basecamp/connect
+BASECAMP_REFRESH_TOKEN=         # optional if using /api/basecamp/connect
+BASECAMP_ACCOUNT_ID=            # optional — resolved from authorization.json
+BASECAMP_MESSAGE_BOARD_ID=      # required for posts
 BASECAMP_USER_AGENT=SJJCC-Creative-PoC (you@example.com)
 ```
 
@@ -110,12 +114,19 @@ See `docs/google-form-trigger.gs` header comments:
 ## 8. Basecamp configuration
 
 1. Register/use an integration at [launchpad.37signals.com/integrations](https://launchpad.37signals.com/integrations) (OAuth 2.0).
-2. Obtain `BASECAMP_ACCESS_TOKEN`.
-3. Set `BASECAMP_ACCOUNT_ID` (from Basecamp account URL / authorization.json).
-4. Set `BASECAMP_MESSAGE_BOARD_ID` for the target message board.
-5. Set `BASECAMP_USER_AGENT` to identify the integration + contact email.
+2. Set `BASECAMP_CLIENT_ID` / `BASECAMP_CLIENT_SECRET` and add redirect URI matching `BASECAMP_REDIRECT_URI`.
+3. Visit `/api/basecamp/connect` (or set `BASECAMP_ACCESS_TOKEN` + `BASECAMP_REFRESH_TOKEN`).
+4. From the callback JSON, note `resolvedAccountId` → set `BASECAMP_ACCOUNT_ID` if you want to pin it.
+5. Set `BASECAMP_MESSAGE_BOARD_ID` for the target message board (Pulse board), or discover it:
 
-If `BASECAMP_ACCESS_TOKEN` is missing, the API returns `BASECAMP_AUTH_REQUIRED` — it will **not** fake success.
+```bash
+curl -s "$APP/api/test/basecamp/projects" | jq
+curl -s "$APP/api/test/basecamp/project?projectId=PROJECT_ID" | jq '.messageBoardId'
+```
+
+6. Set `BASECAMP_USER_AGENT` to identify the integration + contact email.
+
+If no access token is available, the API returns `BASECAMP_AUTH_REQUIRED` — it will **not** fake success.
 
 Flat create route used:
 
@@ -176,6 +187,12 @@ curl -s -X POST "$APP/api/test/canva/autofill" \
 **TEST 5 — Basecamp auth**
 
 ```bash
+# If no tokens yet:
+open "$APP/api/basecamp/connect"
+# Discover board id (optional, before MESSAGE_BOARD_ID is set):
+curl -s "$APP/api/test/basecamp/projects" | jq '.projects'
+curl -s "$APP/api/test/basecamp/project?projectId=YOUR_PROJECT_ID" | jq
+# Then verify configured board:
 curl -s "$APP/api/test/basecamp" | jq
 ```
 

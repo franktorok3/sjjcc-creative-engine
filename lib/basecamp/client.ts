@@ -1,15 +1,28 @@
 import "server-only";
-import type { BasecampMessage, CreateBasecampMessageInput } from "./types";
+import {
+  BasecampAuthError,
+  fetchBasecampAuthorization,
+  getValidBasecampAccessToken,
+  resolveBasecampAccountId,
+} from "./oauth";
+import type {
+  BasecampMessage,
+  BasecampMessageBoardDiscovery,
+  BasecampProject,
+  BasecampProjectSummary,
+  CreateBasecampMessageInput,
+} from "./types";
+import {
+  extractMessageBoardFromProject,
+  mapBasecampProjectSummary,
+} from "./discovery";
 
-export class BasecampAuthError extends Error {
-  code: string;
-
-  constructor(code: string, message: string) {
-    super(message);
-    this.name = "BasecampAuthError";
-    this.code = code;
-  }
-}
+export { BasecampAuthError } from "./oauth";
+export {
+  BasecampDiscoveryError,
+  extractMessageBoardFromProject,
+  mapBasecampProjectSummary,
+} from "./discovery";
 
 export class BasecampApiError extends Error {
   status: number;
@@ -23,38 +36,47 @@ export class BasecampApiError extends Error {
   }
 }
 
-function requireBasecampConfig() {
-  const accessToken = process.env.BASECAMP_ACCESS_TOKEN?.trim();
-  const accountId = process.env.BASECAMP_ACCOUNT_ID?.trim();
-  const messageBoardId = process.env.BASECAMP_MESSAGE_BOARD_ID?.trim();
-  const userAgent = process.env.BASECAMP_USER_AGENT?.trim();
+/** Auth + account only — enough for read-only discovery. */
+async function requireBasecampAuthConfig() {
+  const accessToken = await getValidBasecampAccessToken();
+  const userAgent =
+    process.env.BASECAMP_USER_AGENT?.trim() ||
+    "SJJCC-Creative-PoC (franktorok3@gmail.com)";
 
-  if (!accessToken) {
-    throw new BasecampAuthError(
-      "BASECAMP_AUTH_REQUIRED",
-      "BASECAMP_ACCESS_TOKEN is not configured. Obtain an OAuth 2.0 access token from launchpad.37signals.com and set it in the environment.",
-    );
+  let accountId = process.env.BASECAMP_ACCOUNT_ID?.trim();
+  if (!accountId) {
+    const authorization = await fetchBasecampAuthorization(accessToken);
+    accountId = resolveBasecampAccountId(authorization);
   }
 
-  if (!accountId || !messageBoardId || !userAgent) {
-    throw new BasecampAuthError(
-      "BASECAMP_CONFIG_MISSING",
-      "Missing BASECAMP_ACCOUNT_ID, BASECAMP_MESSAGE_BOARD_ID, or BASECAMP_USER_AGENT",
-    );
-  }
-
-  return { accessToken, accountId, messageBoardId, userAgent };
+  return { accessToken, accountId, userAgent };
 }
 
-export function getBasecampConfig() {
-  return requireBasecampConfig();
+/** Auth + configured message board — required for posting / board verify. */
+async function requireBasecampRuntimeConfig() {
+  const auth = await requireBasecampAuthConfig();
+  const messageBoardId = process.env.BASECAMP_MESSAGE_BOARD_ID?.trim();
+
+  if (!messageBoardId) {
+    throw new BasecampAuthError(
+      "BASECAMP_CONFIG_MISSING",
+      "Missing BASECAMP_MESSAGE_BOARD_ID. Use GET /api/test/basecamp/projects then /api/test/basecamp/project?projectId=... to discover it.",
+    );
+  }
+
+  return { ...auth, messageBoardId };
+}
+
+export async function getBasecampConfig() {
+  return requireBasecampRuntimeConfig();
 }
 
 export async function basecampFetch<T>(
   path: string,
   options: { method?: "GET" | "POST"; body?: unknown } = {},
 ): Promise<{ data: T; headers: Headers; status: number }> {
-  const { accessToken, accountId, userAgent } = requireBasecampConfig();
+  const { accessToken, accountId, userAgent } =
+    await requireBasecampAuthConfig();
   const url = `https://3.basecampapi.com/${accountId}${path}`;
 
   const response = await fetch(url, {
@@ -80,7 +102,7 @@ export async function basecampFetch<T>(
   if (response.status === 401 || response.status === 403) {
     throw new BasecampAuthError(
       "BASECAMP_AUTH_REQUIRED",
-      `Basecamp rejected the access token (${response.status}). Refresh or replace BASECAMP_ACCESS_TOKEN.`,
+      `Basecamp rejected the access token (${response.status}). Revisit /api/basecamp/connect or refresh BASECAMP_ACCESS_TOKEN.`,
     );
   }
 
@@ -92,10 +114,41 @@ export async function basecampFetch<T>(
         : typeof record.message === "string"
           ? record.message
           : `Basecamp API error (${response.status})`;
-    throw new BasecampApiError(response.status, `HTTP_${response.status}`, message);
+    throw new BasecampApiError(
+      response.status,
+      `HTTP_${response.status}`,
+      message,
+    );
   }
 
   return { data: data as T, headers: response.headers, status: response.status };
+}
+
+function nextPagePath(headers: Headers, accountId: string): string | null {
+  const link = headers.get("link") ?? headers.get("Link");
+  if (!link) return null;
+
+  // Rel=next; Basecamp uses RFC 5988 Link headers.
+  const match = link
+    .split(",")
+    .map((part) => part.trim())
+    .find((part) => /rel="?next"?/i.test(part));
+  if (!match) return null;
+
+  const urlMatch = match.match(/<([^>]+)>/);
+  if (!urlMatch?.[1]) return null;
+
+  try {
+    const nextUrl = new URL(urlMatch[1]);
+    const marker = `/${accountId}`;
+    const idx = nextUrl.pathname.indexOf(marker);
+    if (idx === -1) {
+      return `${nextUrl.pathname}${nextUrl.search}`;
+    }
+    return `${nextUrl.pathname.slice(idx + marker.length)}${nextUrl.search}`;
+  } catch {
+    return null;
+  }
 }
 
 /** Lightweight auth check — list recent messages on the configured board. */
@@ -104,17 +157,73 @@ export async function verifyBasecampAuth(): Promise<{
   accountId: string;
   messageBoardId: string;
 }> {
-  const { accountId, messageBoardId } = requireBasecampConfig();
+  const { accountId, messageBoardId } = await requireBasecampRuntimeConfig();
   await basecampFetch<unknown>(
     `/message_boards/${messageBoardId}/messages.json`,
   );
   return { ok: true, accountId, messageBoardId };
 }
 
+/**
+ * Read-only: list active projects visible to the authorized account.
+ * Does not require BASECAMP_MESSAGE_BOARD_ID.
+ */
+export async function listBasecampProjects(): Promise<{
+  accountId: string;
+  projects: BasecampProjectSummary[];
+}> {
+  const { accountId } = await requireBasecampAuthConfig();
+  const projects: BasecampProjectSummary[] = [];
+  let path: string | null = "/projects.json";
+  let pages = 0;
+  const maxPages = 20;
+
+  while (path && pages < maxPages) {
+    pages += 1;
+    const { data, headers } = await basecampFetch<BasecampProject[]>(path);
+    if (!Array.isArray(data)) {
+      throw new BasecampApiError(
+        502,
+        "BASECAMP_PROJECTS_INVALID",
+        "Basecamp /projects.json did not return an array",
+      );
+    }
+    for (const project of data) {
+      projects.push(mapBasecampProjectSummary(project));
+    }
+    path = nextPagePath(headers, accountId);
+  }
+
+  return { accountId, projects };
+}
+
+/**
+ * Read-only: resolve the Message Board dock entry for a project.
+ * Returns the id to set as BASECAMP_MESSAGE_BOARD_ID.
+ */
+export async function getBasecampProjectMessageBoard(
+  projectId: string,
+): Promise<BasecampMessageBoardDiscovery> {
+  const trimmed = projectId.trim();
+  if (!trimmed) {
+    throw new BasecampApiError(
+      400,
+      "BASECAMP_PROJECT_ID_REQUIRED",
+      "projectId query parameter is required",
+    );
+  }
+
+  const { data } = await basecampFetch<BasecampProject>(
+    `/projects/${encodeURIComponent(trimmed)}.json`,
+  );
+
+  return extractMessageBoardFromProject(data);
+}
+
 export async function createMessageBoardMessage(
   input: CreateBasecampMessageInput,
 ): Promise<BasecampMessage> {
-  const { messageBoardId } = requireBasecampConfig();
+  const { messageBoardId } = await requireBasecampRuntimeConfig();
   const { data } = await basecampFetch<BasecampMessage>(
     `/message_boards/${messageBoardId}/messages.json`,
     {

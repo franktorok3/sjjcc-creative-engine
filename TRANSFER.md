@@ -1,28 +1,28 @@
 # Transfer notes
 
-This codebase is the standalone **sjjcc-creative-engine** app.
+This repository (`franktorok3/sjjcc-creative-engine`) is the home for the **Google Form → Canva Brand Template Autofill → Basecamp** proof of concept.
 
-It was extracted from `franktorok3/New-SJJCC-intake` branch `cursor/google-canva-basecamp-poc-b3c5` (PR #2) because that PoC belonged in its own repository.
+## Status: complete
 
-## Finish creating `franktorok3/sjjcc-creative-engine`
+The PoC was extracted from `franktorok3/New-SJJCC-intake` branch `cursor/google-canva-basecamp-poc-b3c5` (PR #2) into this standalone app. The intake Membership Prospect Hub code was intentionally left behind.
 
-The Cursor GitHub App token for this agent is scoped only to `New-SJJCC-intake` and cannot create new repositories. Complete these steps once:
+What lives here:
 
-1. On GitHub, create an **empty** private repository: `franktorok3/sjjcc-creative-engine` (no README/license/.gitignore).
-2. Grant the **Cursor** GitHub App access to that new repository (same installation that has `New-SJJCC-intake`).
-3. Tell the agent to push, **or** run locally:
+- Next.js App Router webhook + test harness
+- Canva Connect OAuth + brand template autofill
+- Basecamp Message Board posting
+- Google Apps Script form trigger (`docs/google-form-trigger.gs`)
+- Field mapping (`config/form-to-canva.ts`) and quick-test docs
 
-```bash
-git clone https://github.com/franktorok3/New-SJJCC-intake.git
-cd New-SJJCC-intake
-git fetch origin export/sjjcc-creative-engine
-git checkout export/sjjcc-creative-engine
-git remote add creative https://github.com/franktorok3/sjjcc-creative-engine.git
-git push -u creative export/sjjcc-creative-engine:main
-```
+## Optional intake cleanup
 
-4. After the new repo is healthy, close (do not merge) intake PR #2 and delete branch `cursor/google-canva-basecamp-poc-b3c5` if desired. The staging branch `export/sjjcc-creative-engine` can also be deleted.
+If the old intake repo/branches still exist:
 
-## Commit
+1. Close (do not merge) intake PR #2
+2. Delete branch `cursor/google-canva-basecamp-poc-b3c5`
+3. Delete staging branch `export/sjjcc-creative-engine` if present
 
-`0c5f87da282afc16e99c7dc9d49d61eb332a9e50`
+## Source commit
+
+Initial PoC land: `6564666`  
+Vitest ESM fix: `0c5f87d`
