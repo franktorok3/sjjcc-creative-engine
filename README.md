@@ -42,6 +42,8 @@ Open http://localhost:3000
 | GET | `/api/health` | Liveness |
 | GET | `/api/canva/connect` | Start Canva OAuth (PKCE) |
 | GET | `/api/canva/callback` | OAuth callback / token store |
+| GET | `/api/basecamp/connect` | Start Basecamp / Launchpad OAuth |
+| GET | `/api/basecamp/callback` | OAuth callback / token store + accounts |
 | GET | `/api/test/canva/templates` | Auth check + list brand templates |
 | GET | `/api/test/canva/template-dataset` | Dataset fields for configured template |
 | POST | `/api/test/canva/autofill` | Create one autofilled design |

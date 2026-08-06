@@ -105,7 +105,7 @@ function basecampErrorResponse(error: unknown, requestId?: string) {
         error: error.code,
         message: error.message,
         requestId,
-        hint: "Basecamp uses OAuth 2.0. Set BASECAMP_ACCESS_TOKEN (and account/board/user-agent). Do not pretend Basecamp succeeded without a token.",
+        hint: "Basecamp uses OAuth 2.0. Visit /api/basecamp/connect or set BASECAMP_ACCESS_TOKEN (+ ACCOUNT/BOARD/USER_AGENT). Do not pretend Basecamp succeeded without a token.",
       },
       { status: 401 },
     );

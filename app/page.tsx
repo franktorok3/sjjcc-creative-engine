@@ -17,6 +17,10 @@ export default function HomePage() {
           <code className="rounded bg-zinc-100 px-1">GET /api/canva/connect</code>
         </li>
         <li>
+          Basecamp OAuth:{" "}
+          <code className="rounded bg-zinc-100 px-1">GET /api/basecamp/connect</code>
+        </li>
+        <li>
           Webhook:{" "}
           <code className="rounded bg-zinc-100 px-1">POST /api/form-submit</code>
         </li>
