@@ -1,23 +1,29 @@
 /**
  * Explicit Google Form question → Canva Brand Template autofill field map.
  *
+ * Brand Kit: AI Marketing 2.0 (see config/canva-brand.ts).
+ *
  * IMPORTANT:
  * Do not guess Canva field names. First call:
  *   GET /api/test/canva/template-dataset
- * and replace the Canva-side values below with the real dataset keys.
+ * and replace Canva-side values with the real dataset keys.
+ *
+ * Locked brand structure (brand bar, SJJCC/UJA logos) is template-owned and
+ * must NOT appear in this map. QR image content is generated from the
+ * destination URL and bound in code — do not map logos or brand-bar fields here.
  *
  * Unmapped Google Form fields are ignored.
  * Mapped Canva fields that are missing from the live dataset cause a clear error.
  */
 
-/** Google Form question title → Canva autofill field name */
+/** Google Form question title → Canva autofill field name (VARIABLE content only). */
 export const FORM_TO_CANVA_FIELD_MAP: Record<string, string> = {
-  // Example placeholders — replace after inspecting the template dataset:
+  // Placeholders — replace after inspecting the AI Marketing 2.0 template dataset:
   "What is the name of the promotion?": "HEADLINE",
   "Promotion description": "DESCRIPTION",
   "Event date": "DATE",
   "Event time": "TIME",
-  "Location": "LOCATION",
+  Location: "LOCATION",
   "Registration URL": "URL",
 };
 

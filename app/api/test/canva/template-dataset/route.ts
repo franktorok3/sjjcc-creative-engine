@@ -6,6 +6,8 @@ import {
   getConfiguredBrandTemplateId,
 } from "@/lib/canva/templates";
 import { FORM_TO_CANVA_FIELD_MAP } from "@/config/form-to-canva";
+import { CANVA_BRAND_KIT_NAME } from "@/config/canva-brand";
+import { validateBrandTemplateStructure } from "@/lib/canva/brand-validation";
 
 export const runtime = "nodejs";
 
@@ -29,6 +31,7 @@ export async function GET() {
 
     return NextResponse.json({
       success: true,
+      brandKitRequired: CANVA_BRAND_KIT_NAME,
       brandTemplateId,
       dataset,
       datasetFields,
@@ -37,6 +40,9 @@ export async function GET() {
         (name) =>
           `FORM_TO_CANVA_FIELD_MAP references "${name}" which is not in the live dataset`,
       ),
+      structure: validateBrandTemplateStructure(dataset),
+      reminder:
+        "Do not guess field IDs. Update config/form-to-canva.ts and config/canva-brand.ts VARIABLE_DATASET_FIELD_ROLES from datasetFields. Brand bar + SJJCC/UJA logos remain template-owned.",
     });
   } catch (error) {
     if (error instanceof CanvaAuthError) {

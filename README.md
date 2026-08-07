@@ -44,7 +44,8 @@ Open http://localhost:3000
 | GET | `/api/canva/callback` | OAuth callback / token store |
 | GET | `/api/basecamp/connect` | Start Basecamp / Launchpad OAuth |
 | GET | `/api/basecamp/callback` | OAuth callback / token store + accounts |
-| GET | `/api/test/canva/templates` | Auth check + list brand templates |
+| GET | `/api/test/canva/templates` | Auth check + list brand templates (AI Marketing 2.0 prioritized) |
+| GET | `/api/test/canva/brand-check` | Brand Kit / structure / dataset role report |
 | GET | `/api/test/canva/template-dataset` | Dataset fields for configured template |
 | POST | `/api/test/canva/autofill` | Create one autofilled design |
 | GET/POST | `/api/test/basecamp` | Auth check / TEST message |
@@ -54,13 +55,18 @@ Open http://localhost:3000
 
 ## Field mapping
 
-Edit `config/form-to-canva.ts` **after** inspecting the live template dataset:
+Brand Kit for production: **AI Marketing 2.0** (see `config/canva-brand.ts`).
+
+Edit `config/form-to-canva.ts` **and** `config/canva-brand.ts` **after** inspecting the live template dataset:
 
 ```bash
+curl -s http://localhost:3000/api/test/canva/brand-check | jq
 curl -s http://localhost:3000/api/test/canva/template-dataset | jq
 ```
 
 Do not guess Canva autofill field names.
+
+Locked template chrome (bottom brand bar, SJJCC + UJA logos) must remain in the Brand Template itself. Autofill only fills variable content + QR image (from destination URL).
 
 ## Google Apps Script
 

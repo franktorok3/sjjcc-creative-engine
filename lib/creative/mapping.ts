@@ -4,6 +4,7 @@ import {
   PROMOTION_NAME_FORM_FIELD,
   REQUIRED_FORM_FIELDS,
 } from "@/config/form-to-canva";
+import { assertMappingRespectsLockedBrandFields } from "@/lib/canva/brand-validation";
 import type { CanvaAutofillData, CanvaBrandTemplateDataset } from "@/lib/canva/types";
 
 export class MappingError extends Error {
@@ -74,6 +75,9 @@ export function mapFormFieldsToCanvaData(
   dataset: CanvaBrandTemplateDataset,
   requestId?: string,
 ): { data: CanvaAutofillData; mappings: FieldMappingLog[] } {
+  // Never allow form values to populate locked brand chrome or QR image slots.
+  assertMappingRespectsLockedBrandFields(FORM_TO_CANVA_FIELD_MAP);
+
   const datasetKeys = Object.keys(dataset);
   const data: CanvaAutofillData = {};
   const mappings: FieldMappingLog[] = [];

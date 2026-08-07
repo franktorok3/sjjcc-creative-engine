@@ -14,9 +14,12 @@ import {
   type WorkflowSuccess,
 } from "@/lib/creative/workflow";
 import { MappingError } from "@/lib/creative/mapping";
+import { BrandStructureError } from "@/lib/canva/brand-validation";
 import { CanvaApiError } from "@/lib/canva/client";
 import { CanvaAutofillError } from "@/lib/canva/autofill";
 import { BasecampApiError } from "@/lib/basecamp/client";
+import { CanvaAssetError } from "@/lib/canva/assets";
+import { QrGenerationError } from "@/lib/canva/qr";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -88,10 +91,24 @@ export async function POST(request: Request) {
 }
 
 function errorResponse(requestId: string, error: unknown) {
-  if (error instanceof MappingError) {
+  if (error instanceof MappingError || error instanceof BrandStructureError) {
+    return NextResponse.json(
+      {
+        success: false,
+        error: error.code,
+        message: error.message,
+        requestId,
+        ...("details" in error && error.details
+          ? { details: error.details }
+          : {}),
+      },
+      { status: 400 },
+    );
+  }
+  if (error instanceof QrGenerationError || error instanceof CanvaAssetError) {
     return NextResponse.json(
       { success: false, error: error.code, message: error.message, requestId },
-      { status: 400 },
+      { status: 502 },
     );
   }
   if (error instanceof CanvaAuthError) {

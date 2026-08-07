@@ -1,4 +1,5 @@
 import "server-only";
+import { CANVA_BRAND_KIT_QUERY } from "@/config/canva-brand";
 import { canvaFetch } from "./client";
 import type {
   CanvaBrandTemplate,
@@ -9,24 +10,34 @@ export async function listBrandTemplates(params?: {
   query?: string;
   continuation?: string;
   limit?: number;
+  /** When true (default), prefer AI Marketing 2.0 search query if none provided. */
+  preferAiMarketingKit?: boolean;
 }): Promise<{
   items: CanvaBrandTemplate[];
   continuation?: string;
+  queryUsed: string | undefined;
 }> {
+  const preferAiMarketingKit = params?.preferAiMarketingKit !== false;
+  const query =
+    params?.query?.trim() ||
+    (preferAiMarketingKit ? CANVA_BRAND_KIT_QUERY : undefined);
+
   const response = await canvaFetch<{
     items?: CanvaBrandTemplate[];
     continuation?: string;
   }>("/brand-templates", {
     query: {
-      query: params?.query,
+      query,
       continuation: params?.continuation,
       limit: params?.limit ? String(params.limit) : undefined,
+      dataset: "non_empty",
     },
   });
 
   return {
     items: response.items ?? [],
     continuation: response.continuation,
+    queryUsed: query,
   };
 }
 

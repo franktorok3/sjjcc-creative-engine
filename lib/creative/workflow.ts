@@ -4,14 +4,23 @@ import {
   createMessageBoardMessage,
 } from "@/lib/basecamp/client";
 import { autofillBrandTemplate } from "@/lib/canva/autofill";
-import { getBrandTemplateDataset, getConfiguredBrandTemplateId } from "@/lib/canva/templates";
+import {
+  assertBrandTemplateStructure,
+  BrandStructureError,
+} from "@/lib/canva/brand-validation";
+import {
+  getBrandTemplateDataset,
+  getConfiguredBrandTemplateId,
+} from "@/lib/canva/templates";
 import {
   assertRequiredFormFields,
+  attachQrAutofillFromDestinationUrl,
   flattenNamedValues,
   getPromotionName,
-  mapFormFieldsToCanvaData,
-} from "@/lib/creative/mapping";
+  mapFormFieldsToCanvaDataSafe,
+} from "@/lib/creative/branded-mapping";
 import { logFailed, logMilestone } from "@/lib/creative/logging";
+import { MappingError } from "@/lib/creative/mapping";
 
 export type FormSubmitPayload = {
   source: "google_form";
@@ -26,6 +35,7 @@ export type WorkflowSuccess = {
   canvaDesignUrl: string;
   basecampMessageId: string;
   basecampMessageUrl: string;
+  qrAssetId?: string;
 };
 
 export async function runFormToCanvaToBasecampWorkflow(
@@ -40,10 +50,32 @@ export async function runFormToCanvaToBasecampWorkflow(
 
     const brandTemplateId = getConfiguredBrandTemplateId();
     const dataset = await getBrandTemplateDataset(brandTemplateId);
+
+    const structure = assertBrandTemplateStructure(dataset);
+    logMilestone(
+      requestId,
+      "CANVA_BRAND_STRUCTURE_OK",
+      `brandKit=${structure.brandKitName} templateId=${brandTemplateId}`,
+    );
     logMilestone(requestId, "CANVA_TEMPLATE_VALIDATED", `templateId=${brandTemplateId}`);
 
-    const { data } = mapFormFieldsToCanvaData(fields, dataset, requestId);
+    let { data } = mapFormFieldsToCanvaDataSafe(fields, dataset, requestId);
     const promotionName = getPromotionName(fields);
+
+    const withQr = await attachQrAutofillFromDestinationUrl({
+      fields,
+      dataset,
+      data,
+      requestId,
+    });
+    data = withQr.data;
+    if (!withQr.skipped) {
+      logMilestone(
+        requestId,
+        "CANVA_QR_ATTACHED",
+        `assetId=${withQr.qrAssetId}`,
+      );
+    }
 
     const design = await autofillBrandTemplate({
       brandTemplateId,
@@ -66,7 +98,7 @@ export async function runFormToCanvaToBasecampWorkflow(
       submittedAt: payload.submittedAt,
       fields,
       canvaDesignUrl: design.designUrl,
-      status: "Canva draft generated",
+      status: "Canva draft generated (AI Marketing 2.0)",
     });
 
     const message = await createMessageBoardMessage({
@@ -92,6 +124,7 @@ export async function runFormToCanvaToBasecampWorkflow(
       canvaDesignUrl: design.designUrl,
       basecampMessageId: messageId,
       basecampMessageUrl: messageUrl,
+      ...(withQr.qrAssetId ? { qrAssetId: withQr.qrAssetId } : {}),
     };
   } catch (error) {
     const stage = inferStage(error);
@@ -106,10 +139,25 @@ function inferStage(error: unknown): string {
   const name = (error as { name?: string }).name ?? "";
   const code = (error as { code?: string }).code ?? "";
 
-  if (name.includes("Mapping") || code.includes("FORM") || code.includes("MAPPING") || code.includes("REQUIRED_FORM")) {
+  if (
+    name.includes("Mapping") ||
+    code.includes("FORM") ||
+    code.includes("MAPPING") ||
+    code.includes("REQUIRED_FORM")
+  ) {
     return "mapping";
+  }
+  if (
+    name.includes("BrandStructure") ||
+    code.includes("BRAND") ||
+    code.includes("QR_") ||
+    code.includes("LOCKED_FIELD")
+  ) {
+    return "brand_structure";
   }
   if (name.includes("Canva") || code.startsWith("CANVA_")) return "canva";
   if (name.includes("Basecamp") || code.startsWith("BASECAMP_")) return "basecamp";
+  if (error instanceof MappingError) return "mapping";
+  if (error instanceof BrandStructureError) return "brand_structure";
   return "workflow";
 }
