@@ -75,7 +75,8 @@ export function mapFormFieldsToCanvaData(
   dataset: CanvaBrandTemplateDataset,
   requestId?: string,
 ): { data: CanvaAutofillData; mappings: FieldMappingLog[] } {
-  // Never allow form values to populate locked brand chrome or QR image slots.
+  // Form mapping must not touch locked brand chrome or the QR image slot.
+  // QR_CODE remains a variable field — workflow preprocessing populates it.
   assertMappingRespectsLockedBrandFields(FORM_TO_CANVA_FIELD_MAP);
 
   const datasetKeys = Object.keys(dataset);

@@ -181,10 +181,11 @@ export function validateBrandTemplateStructure(
   }
 
   const apiLimitations = [
-    "Canva Connect Autofill cannot verify pixel positions (brand bar at bottom, QR bottom-right above bar). Those must be designed into the AI Marketing 2.0 Brand Template.",
+    "Canva Connect Autofill cannot verify pixel positions (brand bar at bottom, QR placement zone bottom-right above bar). Those locked structural positions must be designed into the AI Marketing 2.0 Brand Template.",
     "Canva Connect does not expose a Brand Kit selector API; we prioritize Brand Templates whose titles match \"AI Marketing 2.0\".",
-    "Locked logos/brand bar that are not dataset fields remain template chrome and cannot be altered by Autofill — preferred.",
-    "If logo/bar elements are exposed as dataset image fields, Creative Engine refuses to populate them from form values.",
+    "LOCKED structure: bottom brand bar, SJJCC/UJA logos, QR placement zone, margins — template-owned.",
+    "CONTROLLED VARIABLE: QR image content + destination URL — QR preprocessing populates QR_CODE with a generated Canva asset_id; form mapping must not.",
+    "If logo/bar elements are exposed as dataset image fields, Creative Engine refuses to populate them from form values or QR preprocessing.",
   ];
 
   return {
