@@ -121,7 +121,7 @@ describe("locked brand fields vs form mapping", () => {
         { Logo: "SJJCC_LOGO" },
         { additionalLockedFields: ["SJJCC_LOGO"] },
       ),
-    ).toThrow(/locked\/reserved/i);
+    ).toThrow(/locked brand-structure/i);
   });
 
   it("rejects mapping the QR image field from arbitrary form values", () => {
@@ -129,7 +129,16 @@ describe("locked brand fields vs form mapping", () => {
       assertMappingRespectsLockedBrandFields({
         "QR text": "QR_CODE",
       }),
-    ).toThrow(/QR/i);
+    ).toThrow(/CANVA_QR_FORM_MAPPING_FORBIDDEN|controlled variable|QR preprocessing/i);
+  });
+
+  it("classifies QR_CODE as variable content, not locked structure", () => {
+    expect(
+      Object.values(LOCKED_BRAND_DATASET_FIELDS).includes("QR_CODE" as never),
+    ).toBe(false);
+    expect(VARIABLE_DATASET_FIELD_ROLES.qrCode.canvaField).toBe("QR_CODE");
+    expect(QR_PLACEMENT.region).toBe("bottom_right");
+    expect(QR_PLACEMENT.relativeTo).toBe("above_brand_bar");
   });
 
   it("never guesses unknown Canva dataset fields", () => {

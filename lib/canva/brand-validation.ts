@@ -226,25 +226,46 @@ export function assertBrandTemplateStructure(
 }
 
 /**
- * Ensure a Form→Canva mapping never targets locked brand-structure fields
- * or the QR image slot (QR is generated in code from the destination URL).
+ * Form→Canva mapping deny-list.
+ *
+ * - Locked brand-structure fields (logos / brand bar): never populated by
+ *   form mapping or by QR preprocessing.
+ * - QR image field (VARIABLE_DATASET_FIELD_ROLES.qrCode): blocked from
+ *   *arbitrary form mapping* only. QR preprocessing MUST still populate it
+ *   with a generated Canva asset_id from the destination URL.
+ *
+ * Do not treat QR_CODE as a field the workflow cannot write.
  */
 export function assertMappingRespectsLockedBrandFields(
   formToCanvaMap: Record<string, string>,
   options?: { additionalLockedFields?: string[] },
 ): void {
-  const locked = new Set([
+  const structureLocked = new Set([
     ...configuredLockedFieldNames(),
     ...(options?.additionalLockedFields ?? []),
   ]);
   const qrField = configuredQrFieldName();
-  if (qrField) locked.add(qrField);
+  /** Form-mapping forbidden; workflow QR preprocessing is allowed. */
+  const formMappingForbidden = new Set(structureLocked);
+  if (qrField) formMappingForbidden.add(qrField);
 
   for (const [googleField, canvaField] of Object.entries(formToCanvaMap)) {
-    if (locked.has(canvaField)) {
+    if (structureLocked.has(canvaField)) {
       throw new BrandStructureError(
         "CANVA_LOCKED_FIELD_MAPPED",
-        `Google Form field "${googleField}" maps to locked/reserved Canva field "${canvaField}". Brand bar, logos, and QR image slots must not be populated from arbitrary form values.`,
+        `Google Form field "${googleField}" maps to locked brand-structure Canva field "${canvaField}". Brand bar and logos must remain template-owned.`,
+      );
+    }
+    if (qrField && canvaField === qrField) {
+      throw new BrandStructureError(
+        "CANVA_QR_FORM_MAPPING_FORBIDDEN",
+        `Google Form field "${googleField}" maps to QR image field "${canvaField}". QR_CODE is a controlled variable populated only by QR preprocessing (destination URL → PNG → Canva asset_id), not by raw form mapping.`,
+      );
+    }
+    if (formMappingForbidden.has(canvaField)) {
+      throw new BrandStructureError(
+        "CANVA_LOCKED_FIELD_MAPPED",
+        `Google Form field "${googleField}" maps to reserved Canva field "${canvaField}".`,
       );
     }
   }

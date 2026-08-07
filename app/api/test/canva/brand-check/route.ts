@@ -60,12 +60,32 @@ export async function GET() {
       liveDatasetFields: dataset,
       configuredVariableRoles: VARIABLE_DATASET_FIELD_ROLES,
       configuredLockedFields: LOCKED_BRAND_DATASET_FIELDS,
+      classification: {
+        lockedTemplateStructure: [
+          "bottom_brand_bar",
+          "sjjcc_logos",
+          "uja_logos",
+          "qr_placement_zone",
+          "margins_structural_layout",
+        ],
+        controlledVariableContent: [
+          "qr_image_asset",
+          "qr_destination_url",
+        ],
+        qrCodeField: {
+          role: "controlled_variable_image",
+          formMapping: "forbidden",
+          workflowQrPreprocessing: "required_when_destination_url_present",
+          populatesWith: "generated_canva_asset_id",
+          position: "locked_by_brand_template_bottom_right_above_brand_bar",
+        },
+      },
       structure,
       nextSteps: [
         "Confirm an AI Marketing 2.0 Brand Template is selected (CANVA_BRAND_TEMPLATE_ID).",
         "Replace VARIABLE_DATASET_FIELD_ROLES / FORM_TO_CANVA_FIELD_MAP Canva keys with liveDatasetFields names — do not guess.",
         "Ensure the template embeds the bottom brand bar + SJJCC/UJA logos as locked chrome (not Autofill content).",
-        "Ensure a QR image autofill slot sits bottom-right above the brand bar.",
+        "Ensure a QR image autofill slot sits bottom-right above the brand bar (position locked; image content variable via preprocessing).",
       ],
     });
   } catch (error) {

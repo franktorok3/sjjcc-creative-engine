@@ -33,10 +33,15 @@ export const DISALLOWED_BRAND_KIT_MARKERS = [
 ] as const;
 
 /**
- * Fixed brand-bar layout contract (template-owned; not Autofill content).
- * Enforced in Canva by publishing a Brand Template that embeds this chrome.
- * Our API layer refuses to overwrite reserved logo/bar fields and fails if
- * required structural dataset roles are missing once configured.
+ * LOCKED TEMPLATE STRUCTURE (not Autofill creative content):
+ * - bottom brand bar
+ * - SJJCC logos
+ * - UJA logos
+ * - QR placement zone (position/size in the canvas)
+ * - margins / structural layout
+ *
+ * These are owned by the Canva Brand Template design. Autofill cannot
+ * reposition them. Pixel layout is enforced in Canva, not via API.
  */
 export const BRAND_BAR_LAYOUT = {
   required: true,
@@ -50,8 +55,11 @@ export const BRAND_BAR_LAYOUT = {
 };
 
 /**
- * QR placement contract: bottom-right content area, ABOVE the brand bar.
- * QR must never sit inside the brand bar or overlap logos.
+ * LOCKED: QR *placement zone* — bottom-right, immediately above the brand bar.
+ * The zone/position is template-owned and never moved by Autofill.
+ *
+ * CONTROLLED VARIABLE (separate): the QR *image content* and destination URL
+ * are Autofill-controlled — see VARIABLE_DATASET_FIELD_ROLES.qrCode.
  */
 export const QR_PLACEMENT = {
   region: "bottom_right" as const,
@@ -63,9 +71,13 @@ export const QR_PLACEMENT = {
 };
 
 /**
- * Dataset field names reserved for locked brand structure.
+ * Dataset field names for locked brand *structure* (logos / brand bar only).
  * If these keys appear in a live dataset, Autofill must NEVER populate them
- * from Google Form values (logos stay template-owned).
+ * from Google Form values or QR preprocessing (logos stay template-owned).
+ *
+ * Do NOT put QR_CODE here. QR_CODE is a controlled variable image field:
+ * - blocked from arbitrary Google Form mapping
+ * - MUST be populated by QR preprocessing with a generated Canva asset_id
  *
  * Replace with real Canva dataset keys only after inspecting the live template.
  * Empty strings mean "not yet bound to a live dataset key".
@@ -82,8 +94,14 @@ export const LOCKED_BRAND_DATASET_FIELDS = {
 } as const;
 
 /**
- * Required Autofill roles once the production template is bound.
- * `canvaField` must be set from the live dataset — leave empty until discovery.
+ * CONTROLLED VARIABLE CONTENT — Autofill-populated roles.
+ * `canvaField` must be set from the live dataset — leave empty until discovery
+ * (placeholder names below are for local tests only; never guess production keys).
+ *
+ * QR_CODE is intentionally a variable image role (not locked structure):
+ * the workflow generates a QR PNG from the registration/destination URL,
+ * uploads it to Canva, and writes { type: "image", asset_id } into this field.
+ * Form→Canva mapping must not target it; QR preprocessing must.
  */
 export const VARIABLE_DATASET_FIELD_ROLES = {
   headline: { canvaField: "HEADLINE", type: "text" as const },
@@ -94,8 +112,9 @@ export const VARIABLE_DATASET_FIELD_ROLES = {
   /** Destination URL text field (optional companion to QR image). */
   destinationUrl: { canvaField: "URL", type: "text" as const },
   /**
-   * QR image field — MUST be an image autofill slot placed bottom-right
-   * above the brand bar in the Brand Template.
+   * QR image field (CONTROLLED VARIABLE content).
+   * Placement zone is locked in the Brand Template (bottom-right above bar);
+   * this field only receives the generated QR asset_id from preprocessing.
    */
   qrCode: { canvaField: "QR_CODE", type: "image" as const },
 } as const;
