@@ -11,14 +11,83 @@ const BASECAMP_TOKEN_URL = "https://launchpad.37signals.com/authorization/token"
 const BASECAMP_AUTHORIZATION_URL =
   "https://launchpad.37signals.com/authorization.json";
 
+/**
+ * Sanitized Launchpad token-endpoint failure details.
+ * Never includes secrets, codes, state, tokens, or the POST body.
+ */
+export type BasecampTokenExchangeDiagnostics = {
+  httpStatus: number;
+  contentType: string | null;
+  wwwAuthenticate: string | null;
+  jsonError: string | null;
+  jsonErrorDescription: string | null;
+  responseTextPreview: string | null;
+};
+
 export class BasecampAuthError extends Error {
   code: string;
+  diagnostics?: BasecampTokenExchangeDiagnostics;
 
-  constructor(code: string, message: string) {
+  constructor(
+    code: string,
+    message: string,
+    diagnostics?: BasecampTokenExchangeDiagnostics,
+  ) {
     super(message);
     this.name = "BasecampAuthError";
     this.code = code;
+    this.diagnostics = diagnostics;
   }
+}
+
+/**
+ * Build operator-safe diagnostics from a failed Launchpad token response.
+ * Reads status, Content-Type, WWW-Authenticate, JSON error fields, or a
+ * truncated text preview — never request secrets or response tokens.
+ */
+export async function buildBasecampTokenExchangeDiagnostics(
+  response: Response,
+): Promise<BasecampTokenExchangeDiagnostics> {
+  const contentType = response.headers.get("content-type");
+  const wwwAuthenticate = response.headers.get("www-authenticate");
+  const rawText = await response.text().catch(() => "");
+
+  let jsonError: string | null = null;
+  let jsonErrorDescription: string | null = null;
+  let responseTextPreview: string | null = null;
+
+  const trimmedType = contentType?.toLowerCase() ?? "";
+  const looksJson =
+    trimmedType.includes("application/json") ||
+    trimmedType.includes("+json") ||
+    (rawText.trimStart().startsWith("{") && rawText.trimStart().includes('"'));
+
+  if (looksJson && rawText.trim()) {
+    try {
+      const json = JSON.parse(rawText) as Record<string, unknown>;
+      if (typeof json.error === "string") jsonError = json.error;
+      if (typeof json.error_description === "string") {
+        jsonErrorDescription = json.error_description;
+      }
+      // If JSON parsed but had no OAuth error fields, still avoid dumping body.
+      if (!jsonError && !jsonErrorDescription) {
+        responseTextPreview = rawText.slice(0, 500);
+      }
+    } catch {
+      responseTextPreview = rawText.slice(0, 500);
+    }
+  } else if (rawText) {
+    responseTextPreview = rawText.slice(0, 500);
+  }
+
+  return {
+    httpStatus: response.status,
+    contentType,
+    wwwAuthenticate,
+    jsonError,
+    jsonErrorDescription,
+    responseTextPreview,
+  };
 }
 
 function requireBasecampAppConfig() {
@@ -60,20 +129,35 @@ async function exchangeToken(body: URLSearchParams): Promise<BasecampTokenSet> {
     body,
   });
 
+  if (!response.ok) {
+    const diagnostics = await buildBasecampTokenExchangeDiagnostics(response);
+    const message =
+      diagnostics.jsonErrorDescription ??
+      diagnostics.jsonError ??
+      `Basecamp token exchange failed (${diagnostics.httpStatus})`;
+    // Never log request body, secrets, codes, or tokens.
+    console.error(
+      "[basecamp-oauth] token exchange failed",
+      JSON.stringify({
+        httpStatus: diagnostics.httpStatus,
+        contentType: diagnostics.contentType,
+        wwwAuthenticate: diagnostics.wwwAuthenticate,
+        jsonError: diagnostics.jsonError,
+        jsonErrorDescription: diagnostics.jsonErrorDescription,
+        responseTextPreview: diagnostics.responseTextPreview,
+      }),
+    );
+    throw new BasecampAuthError(
+      "BASECAMP_TOKEN_EXCHANGE_FAILED",
+      message,
+      diagnostics,
+    );
+  }
+
   const json = (await response.json().catch(() => ({}))) as Record<
     string,
     unknown
   >;
-
-  if (!response.ok) {
-    const message =
-      typeof json.error_description === "string"
-        ? json.error_description
-        : typeof json.error === "string"
-          ? json.error
-          : `Basecamp token exchange failed (${response.status})`;
-    throw new BasecampAuthError("BASECAMP_TOKEN_EXCHANGE_FAILED", message);
-  }
 
   const accessToken = String(json.access_token ?? "");
   const refreshToken = String(json.refresh_token ?? "");

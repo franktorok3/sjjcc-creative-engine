@@ -89,7 +89,14 @@ export async function GET(request: Request) {
   } catch (err) {
     if (err instanceof BasecampAuthError) {
       return NextResponse.json(
-        { success: false, error: err.code, message: err.message },
+        {
+          success: false,
+          error: err.code,
+          message: err.message,
+          ...(err.diagnostics
+            ? { launchpadTokenExchange: err.diagnostics }
+            : {}),
+        },
         { status: 400 },
       );
     }
