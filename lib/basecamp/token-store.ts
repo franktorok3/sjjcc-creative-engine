@@ -83,19 +83,30 @@ export async function loadBasecampTokens(): Promise<BasecampTokenSet | null> {
 }
 
 export async function saveBasecampTokens(tokens: BasecampTokenSet): Promise<void> {
+  // Vercel serverless: /var/task is read-only — never mkdir/write .data there.
+  // OAuth callback keeps tokens in-memory for this request; persist via
+  // OAUTH_EXPORT_TOKENS → Vercel env (BASECAMP_ACCESS_TOKEN / REFRESH_TOKEN).
   if (process.env.VERCEL === "1") {
     console.warn(
-      "[basecamp.token-store] VERCEL=1 detected: filesystem token persistence is ephemeral. Prefer env tokens or an external store.",
+      "[basecamp.token-store] VERCEL=1: skipping filesystem token write (read-only). Use OAUTH_EXPORT_TOKENS or BASECAMP_* env tokens.",
     );
+    return;
   }
 
-  await mkdir(STORE_DIR, { recursive: true });
-  const payload: StoredPayload = {
-    tokens,
-    updatedAt: new Date().toISOString(),
-  };
-  const encrypted = encrypt(JSON.stringify(payload));
-  await writeFile(STORE_FILE, encrypted, { mode: 0o600 });
+  try {
+    await mkdir(STORE_DIR, { recursive: true });
+    const payload: StoredPayload = {
+      tokens,
+      updatedAt: new Date().toISOString(),
+    };
+    const encrypted = encrypt(JSON.stringify(payload));
+    await writeFile(STORE_FILE, encrypted, { mode: 0o600 });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(
+      `[basecamp.token-store] filesystem token write skipped: ${message}`,
+    );
+  }
 }
 
 type OauthSession = {
