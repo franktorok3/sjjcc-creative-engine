@@ -30,11 +30,13 @@ describe("shell generation stage logging", () => {
       logShellStage(stage, { shellKey: "flyer_standard_light" });
     }
     expect(infoSpy).toHaveBeenCalledTimes(stages.length);
-    const payloads = infoSpy.mock.calls.map(
-      (call) => JSON.parse(String(call[0])) as { stage: string; scope: string },
-    );
-    expect(payloads.map((p) => p.stage)).toEqual(stages);
-    expect(payloads.every((p) => p.scope === "shell_generation")).toBe(true);
+    const payloads = infoSpy.mock.calls.map((call: unknown[]) => {
+      return JSON.parse(String(call[0])) as { stage: string; scope: string };
+    });
+    expect(payloads.map((p: { stage: string }) => p.stage)).toEqual(stages);
+    expect(
+      payloads.every((p: { scope: string }) => p.scope === "shell_generation"),
+    ).toBe(true);
   });
 
   it("never logs token/secret/authorization fields", () => {
