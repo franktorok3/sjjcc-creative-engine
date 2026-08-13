@@ -10,23 +10,20 @@ import {
   type CreativeShellSpec,
 } from "@/config/creative-shells";
 import type { CreativeTemplate } from "@/config/canva-templates";
-import { CanvaApiError } from "@/lib/canva/client";
-import { importDesignFromBytes } from "@/lib/canva/design-imports";
-import {
-  getDesignDataset,
-  publishDesignAsBrandTemplate,
-} from "@/lib/canva/designs";
-import { getBrandTemplateDataset } from "@/lib/canva/templates";
+import { startDesignImport } from "@/lib/canva/design-imports";
 import { buildShellPptx } from "@/lib/creative/shells/pptx-builder";
+import { logShellStage } from "@/lib/creative/shells/stage-log";
 import {
   validateShellSpec,
   type ShellValidationReport,
 } from "@/lib/creative/shells/validate";
 import { SHELL_FINISHING_CHECKLIST } from "@/config/shell-finishing-checklist";
 
-export type GeneratedShellResult = {
-  key: string;
+export type SubmittedShellJob = {
+  shellKey: string;
   title: string;
+  importJobId: string;
+  statusUrl: string;
   dimensions: {
     width: number;
     height: number;
@@ -34,80 +31,49 @@ export type GeneratedShellResult = {
     widthPx: number;
     heightPx: number;
   };
-  creationMethod: "pptx_design_import";
-  designId: string;
-  designEditUrl: string | null;
-  designViewUrl: string | null;
-  thumbnailUrl: string | null;
-  importJobId: string;
-  importJobStatus: "success" | "failed" | "in_progress";
-  editableImportConfirmed: boolean;
-  brandTemplateId: string | null;
-  brandTemplateViewUrl: string | null;
-  publishAttempted: boolean;
-  publishSucceeded: boolean;
-  publishError: string | null;
-  manualPublishRequired: boolean;
-  AutofillBindingRequired: true;
-  logoReplacementRequired: boolean;
-  autofillFieldsCreated: false;
-  autofillStatus: "not_created_via_api";
-  liveDatasetFieldCount: number;
-  liveDatasetFields: Array<{ name: string; type: string }>;
-  expectedAutofillRoles: string[];
-  lockedBrandElements: string[];
   validation: ShellValidationReport;
   missingLogoAssetEnv: string[];
-  finishingChecklist: string[];
-  manualStepsRemaining: string[];
-  registryCandidate: CreativeTemplate;
+  expectedAutofillRoles: string[];
+  registryCandidatePreview: Omit<CreativeTemplate, "id"> & { id: string };
 };
 
-export type GenerateShellsReport = {
+export type SubmitShellImportsReport = {
   success: true;
+  status: "processing";
   capabilityAssessment: typeof CANVA_SHELL_CAPABILITY_ASSESSMENT;
-  shells: GeneratedShellResult[];
+  jobs: SubmittedShellJob[];
   note: string;
 };
 
-const FINISHING_CHECKLIST = SHELL_FINISHING_CHECKLIST;
-
 /**
- * Generate the initial CE shell family:
- * PPTX → Canva design import → optional Brand Template publish attempt.
- *
- * First successful operational target is an editable Canva design URL.
- * Brand Template publication is best-effort and never blocks generation.
- * Does NOT mark templates approved. Does NOT invent Autofill fields.
+ * Build PPTX shells and create Canva import jobs — does NOT wait for import
+ * completion. Callers should poll GET /api/admin/canva/shell-jobs?jobId=…
  */
-export async function generateCreativeShells(options?: {
+export async function submitCreativeShellImports(options?: {
   keys?: string[];
-  /** Default true — attempt publish; denial sets manualPublishRequired. */
-  attemptPublish?: boolean;
-}): Promise<GenerateShellsReport> {
-  const attemptPublish = options?.attemptPublish !== false;
+}): Promise<SubmitShellImportsReport> {
   const specs = CREATIVE_SHELL_SPECS.filter((s) =>
     options?.keys?.length ? options.keys.includes(s.key) : true,
   );
 
-  const shells: GeneratedShellResult[] = [];
+  const jobs: SubmittedShellJob[] = [];
 
   for (const spec of specs) {
-    shells.push(await generateOneShell(spec, attemptPublish));
+    jobs.push(await submitOneShellImport(spec));
   }
 
   return {
     success: true,
+    status: "processing",
     capabilityAssessment: CANVA_SHELL_CAPABILITY_ASSESSMENT,
-    shells,
-    note: "Editable Canva designs created via PPTX import. Autofill binding and Brand Kit logo replacement remain one-time operator steps. Candidates stay approved=false.",
+    jobs,
+    note: "Canva import jobs created. Poll /api/admin/canva/shell-jobs?jobId=… for status. Autofill binding and Brand Kit logo replacement remain one-time operator steps. Candidates stay approved=false.",
   };
 }
 
-async function generateOneShell(
+async function submitOneShellImport(
   spec: CreativeShellSpec,
-  attemptPublish: boolean,
-): Promise<GeneratedShellResult> {
+): Promise<SubmittedShellJob> {
   const validation = validateShellSpec(spec);
   if (!validation.ok) {
     throw new Error(
@@ -117,76 +83,29 @@ async function generateOneShell(
     );
   }
 
+  logShellStage("pptx_generation_started", { shellKey: spec.key });
   const pptx = await buildShellPptx(spec);
-  const imported = await importDesignFromBytes({
+  logShellStage("pptx_generation_complete", {
+    shellKey: spec.key,
+    bytes: pptx.buffer.byteLength,
+  });
+
+  logShellStage("canva_import_started", {
+    shellKey: spec.key,
+    title: spec.title,
+  });
+  const { importJobId } = await startDesignImport({
     bytes: pptx.buffer,
     title: spec.title,
     mimeType: pptx.mimeType,
   });
-
-  let brandTemplateId: string | null = null;
-  let brandTemplateViewUrl: string | null = null;
-  let publishAttempted = false;
-  let publishSucceeded = false;
-  let publishError: string | null = null;
-
-  if (attemptPublish) {
-    publishAttempted = true;
-    try {
-      const published = await publishDesignAsBrandTemplate(imported.designId);
-      brandTemplateId = published.id;
-      brandTemplateViewUrl = published.viewUrl;
-      publishSucceeded = true;
-    } catch (error) {
-      // Do not fail generation — scopes may lack brandtemplate:content:write
-      publishSucceeded = false;
-      if (error instanceof CanvaApiError) {
-        publishError = `${error.code}: ${error.message}`;
-      } else if (error instanceof Error) {
-        publishError = error.message;
-      } else {
-        publishError = "Publish failed";
-      }
-    }
-  }
-
-  const manualPublishRequired = !publishSucceeded;
-
-  let liveDataset: Record<string, { type: string }> = {};
-  try {
-    if (brandTemplateId) {
-      liveDataset = await getBrandTemplateDataset(brandTemplateId);
-    } else {
-      liveDataset = await getDesignDataset(imported.designId);
-    }
-  } catch {
-    liveDataset = {};
-  }
-
-  const liveDatasetFields = Object.entries(liveDataset).map(([name, field]) => ({
-    name,
-    type: field.type,
-  }));
+  logShellStage("canva_import_job_created", {
+    shellKey: spec.key,
+    importJobId,
+  });
 
   const { widthPx, heightPx } = shellSpecToPixels(spec);
   const missingLogoAssetEnv = missingApprovedLogoAssetIds(getApprovedLogoAssets());
-  const logoReplacementRequired = true;
-
-  const finishingChecklist = [...FINISHING_CHECKLIST];
-  const manualSteps: string[] = [
-    "Replace [[SJJCC_LOGO_LOCKUP]] and [[UJA_LOGO]] with approved Brand Kit assets",
-    "Bind Data Autofill fields to visible [[FIELD]] markers",
-    "Bind [[QR_CODE]] as an image Autofill field",
-    "Confirm QR sits above the brand bar",
-  ];
-  if (manualPublishRequired) {
-    manualSteps.push(
-      "Publish the design as a Brand Template in Canva (API publish unavailable or denied)",
-    );
-  }
-  manualSteps.push(
-    "Run dataset inspection, then set approved=true only after verification",
-  );
 
   const dataset: CreativeTemplate["dataset"] = {};
   for (const role of spec.requiredAutofillRoles) {
@@ -196,29 +115,32 @@ async function generateOneShell(
     dataset.HERO_IMAGE = "image";
   }
 
-  const registryCandidate: CreativeTemplate = {
-    id: brandTemplateId ?? `PENDING_DESIGN_${imported.designId}`,
-    title: spec.title,
-    assetType: spec.assetType,
-    width: spec.width,
-    height: spec.height,
-    unit: spec.unit,
-    density: spec.density,
-    backgroundTreatment: "light",
-    contactTreatment: "compact",
-    partnerTreatment: "sjjcc_uja",
-    supportsImage: Boolean(
-      spec.contentZones.some((z) => z.role === "HERO_IMAGE"),
-    ),
-    supportsQr: true,
-    dataset,
-    priority: 10,
-    approved: false,
-  };
+  const registryCandidatePreview: SubmittedShellJob["registryCandidatePreview"] =
+    {
+      id: `PENDING_IMPORT_${importJobId}`,
+      title: spec.title,
+      assetType: spec.assetType,
+      width: spec.width,
+      height: spec.height,
+      unit: spec.unit,
+      density: spec.density,
+      backgroundTreatment: "light",
+      contactTreatment: "compact",
+      partnerTreatment: "sjjcc_uja",
+      supportsImage: Boolean(
+        spec.contentZones.some((z) => z.role === "HERO_IMAGE"),
+      ),
+      supportsQr: true,
+      dataset,
+      priority: 10,
+      approved: false,
+    };
 
   return {
-    key: spec.key,
+    shellKey: spec.key,
     title: spec.title,
+    importJobId,
+    statusUrl: `/api/admin/canva/shell-jobs?jobId=${encodeURIComponent(importJobId)}`,
     dimensions: {
       width: spec.width,
       height: spec.height,
@@ -226,46 +148,16 @@ async function generateOneShell(
       widthPx,
       heightPx,
     },
-    creationMethod: "pptx_design_import",
-    designId: imported.designId,
-    designEditUrl: imported.editUrl,
-    designViewUrl: imported.viewUrl,
-    thumbnailUrl: imported.thumbnailUrl,
-    importJobId: imported.jobId,
-    importJobStatus: imported.importJobStatus,
-    editableImportConfirmed: imported.editableImportConfirmed,
-    brandTemplateId,
-    brandTemplateViewUrl,
-    publishAttempted,
-    publishSucceeded,
-    publishError,
-    manualPublishRequired,
-    AutofillBindingRequired: true,
-    logoReplacementRequired,
-    autofillFieldsCreated: false,
-    autofillStatus: "not_created_via_api",
-    liveDatasetFieldCount: liveDatasetFields.length,
-    liveDatasetFields,
+    validation,
+    missingLogoAssetEnv,
     expectedAutofillRoles: [
       ...spec.requiredAutofillRoles,
       ...spec.optionalAutofillRoles,
     ],
-    lockedBrandElements: [
-      "bottom_brand_bar",
-      "sjjcc_logo_zone",
-      "uja_logo_zone",
-      "qr_placement_above_brand_bar",
-    ],
-    validation,
-    missingLogoAssetEnv,
-    finishingChecklist,
-    manualStepsRemaining: manualSteps,
-    registryCandidate,
+    registryCandidatePreview,
   };
 }
 
-export function candidatesFromGeneration(
-  shells: GeneratedShellResult[],
-): CreativeTemplate[] {
-  return shells.map((s) => s.registryCandidate);
+export function finishingChecklistForShell(): string[] {
+  return [...SHELL_FINISHING_CHECKLIST];
 }

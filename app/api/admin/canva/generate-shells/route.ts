@@ -1,27 +1,30 @@
 import { NextResponse } from "next/server";
-import { writeFile, mkdir } from "fs/promises";
-import path from "path";
 import { CanvaApiError } from "@/lib/canva/client";
 import { CanvaAuthError } from "@/lib/canva/oauth";
 import { CanvaDesignImportError } from "@/lib/canva/design-imports";
 import { assertAdminSecret } from "@/lib/creative/admin-auth";
-import { generateCreativeShells } from "@/lib/creative/shells/generate";
+import { submitCreativeShellImports } from "@/lib/creative/shells/generate";
+import { logShellStage } from "@/lib/creative/shells/stage-log";
 import { CANVA_SHELL_CAPABILITY_ASSESSMENT } from "@/config/canva-shell-capabilities";
 
 export const runtime = "nodejs";
-export const maxDuration = 120;
+/** Submit-only: PPTX build + Canva import create. No long polling. */
+export const maxDuration = 60;
 
 /**
- * Operator-only: generate CE shell family via PPTX → Canva import.
+ * Operator-only: start CE shell imports (PPTX → Canva import job).
+ * Returns immediately with import job IDs — poll GET /api/admin/canva/shell-jobs.
+ *
  * Header: X-Admin-Secret
  * Resolves CREATIVE_ENGINE_ADMIN_SECRET, else GOOGLE_FORM_WEBHOOK_SECRET.
  *
  * Body (optional JSON):
- *   { "keys": ["flyer_standard_light"], "attemptPublish": true, "persistCandidates": true }
+ *   { "keys": ["flyer_standard_light"] }
  */
 export async function POST(request: Request) {
   try {
     assertAdminSecret(request);
+    logShellStage("auth_validated");
   } catch (error) {
     const code =
       error instanceof Error && "code" in error
@@ -46,35 +49,41 @@ export async function POST(request: Request) {
   try {
     const body = (await request.json().catch(() => ({}))) as {
       keys?: string[];
-      attemptPublish?: boolean;
-      persistCandidates?: boolean;
     };
 
-    const report = await generateCreativeShells({
+    const report = await submitCreativeShellImports({
       keys: body.keys,
-      attemptPublish: body.attemptPublish,
     });
 
-    if (body.persistCandidates !== false) {
-      try {
-        await persistCandidateRegistry(
-          report.shells.map((s) => s.registryCandidate),
-        );
-        await persistGenerationResults(report.shells.map(sanitizeShell));
-      } catch {
-        // Vercel FS is ephemeral/read-only — response still contains candidates.
-      }
-    }
-
-    return NextResponse.json({
-      success: true,
+    const payload = {
+      success: true as const,
+      status: "processing" as const,
+      jobs: report.jobs.map((job) => ({
+        shellKey: job.shellKey,
+        title: job.title,
+        importJobId: job.importJobId,
+        statusUrl: job.statusUrl,
+        dimensions: job.dimensions,
+        validation: job.validation,
+        missingLogoAssetEnv: job.missingLogoAssetEnv,
+        expectedAutofillRoles: job.expectedAutofillRoles,
+        registryCandidatePreview: job.registryCandidatePreview,
+      })),
       capabilityAssessment: report.capabilityAssessment,
-      shells: report.shells.map(sanitizeShell),
       note: report.note,
       previewPath: "/admin/shells",
+      pollPath: "/api/admin/canva/shell-jobs",
+    };
+
+    logShellStage("response_returned", {
+      status: "processing",
+      jobCount: payload.jobs.length,
     });
+
+    return NextResponse.json(payload);
   } catch (error) {
     if (error instanceof CanvaAuthError) {
+      logShellStage("canva_import_failed", { code: error.code });
       return NextResponse.json(
         { success: false, error: error.code, message: error.message },
         { status: 401 },
@@ -84,11 +93,21 @@ export async function POST(request: Request) {
       error instanceof CanvaApiError ||
       error instanceof CanvaDesignImportError
     ) {
+      logShellStage("canva_import_failed", {
+        code: error.code,
+        importJobId:
+          error instanceof CanvaDesignImportError
+            ? error.importJobId
+            : undefined,
+      });
       return NextResponse.json(
         {
           success: false,
           error: error.code,
           message: error.message,
+          ...(error instanceof CanvaDesignImportError && error.importJobId
+            ? { importJobId: error.importJobId }
+            : {}),
           ...(error instanceof CanvaApiError ? { status: error.status } : {}),
         },
         { status: 502 },
@@ -124,96 +143,6 @@ export async function GET(request: Request) {
   return NextResponse.json({
     success: true,
     capabilityAssessment: CANVA_SHELL_CAPABILITY_ASSESSMENT,
+    note: "POST this route to create import jobs; poll GET /api/admin/canva/shell-jobs?jobId=…",
   });
-}
-
-function sanitizeShell(shell: Awaited<
-  ReturnType<typeof generateCreativeShells>
->["shells"][number]) {
-  return {
-    key: shell.key,
-    title: shell.title,
-    dimensions: shell.dimensions,
-    creationMethod: shell.creationMethod,
-    designId: shell.designId,
-    designEditUrl: shell.designEditUrl,
-    designViewUrl: shell.designViewUrl,
-    thumbnailUrl: shell.thumbnailUrl,
-    importJobId: shell.importJobId,
-    importJobStatus: shell.importJobStatus,
-    editableImportConfirmed: shell.editableImportConfirmed,
-    brandTemplateId: shell.brandTemplateId,
-    brandTemplateViewUrl: shell.brandTemplateViewUrl,
-    publishAttempted: shell.publishAttempted,
-    publishSucceeded: shell.publishSucceeded,
-    publishError: shell.publishError,
-    manualPublishRequired: shell.manualPublishRequired,
-    AutofillBindingRequired: shell.AutofillBindingRequired,
-    logoReplacementRequired: shell.logoReplacementRequired,
-    autofillFieldsCreated: shell.autofillFieldsCreated,
-    autofillStatus: shell.autofillStatus,
-    liveDatasetFieldCount: shell.liveDatasetFieldCount,
-    liveDatasetFields: shell.liveDatasetFields,
-    expectedAutofillRoles: shell.expectedAutofillRoles,
-    lockedBrandElements: shell.lockedBrandElements,
-    validation: shell.validation,
-    missingLogoAssetEnv: shell.missingLogoAssetEnv,
-    finishingChecklist: shell.finishingChecklist,
-    manualStepsRemaining: shell.manualStepsRemaining,
-    registryCandidate: shell.registryCandidate,
-  };
-}
-
-async function persistCandidateRegistry(
-  candidates: Array<{
-    id: string;
-    title: string;
-    assetType: string;
-    width: number;
-    height: number;
-    unit: string;
-    density: string;
-    backgroundTreatment: string;
-    contactTreatment: string;
-    partnerTreatment: string;
-    supportsImage: boolean;
-    supportsQr: boolean;
-    dataset: Record<string, string>;
-    priority: number;
-    approved: boolean;
-  }>,
-): Promise<void> {
-  const dir = path.join(process.cwd(), "config");
-  await mkdir(dir, { recursive: true });
-  const filePath = path.join(dir, "canva-template-candidates.generated.json");
-  await writeFile(
-    filePath,
-    JSON.stringify(
-      {
-        generatedAt: new Date().toISOString(),
-        note: "Candidates only — approved=false. Copy verified entries into config/canva-templates.ts after dataset inspection.",
-        candidates,
-      },
-      null,
-      2,
-    ),
-    "utf8",
-  );
-}
-
-async function persistGenerationResults(shells: unknown[]): Promise<void> {
-  const dir = path.join(process.cwd(), "config");
-  await mkdir(dir, { recursive: true });
-  await writeFile(
-    path.join(dir, "canva-shell-generation.latest.json"),
-    JSON.stringify(
-      {
-        generatedAt: new Date().toISOString(),
-        shells,
-      },
-      null,
-      2,
-    ),
-    "utf8",
-  );
 }

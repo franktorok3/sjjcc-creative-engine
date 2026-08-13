@@ -3,6 +3,7 @@ import { CANVA_SHELL_CAPABILITY_ASSESSMENT } from "@/config/canva-shell-capabili
 import { CREATIVE_TEMPLATE_CANDIDATES } from "@/config/canva-template-candidates";
 import { SHELL_FINISHING_CHECKLIST } from "@/config/shell-finishing-checklist";
 import { validateShellSpec } from "@/lib/creative/shells/validate";
+import { ShellGeneratorPanel } from "@/components/ShellGeneratorPanel";
 import { Fraunces, Outfit } from "next/font/google";
 import { readFile } from "fs/promises";
 import path from "path";
@@ -81,25 +82,31 @@ export default async function AdminShellsPage() {
           </p>
         </header>
 
+        <ShellGeneratorPanel
+          shells={CREATIVE_SHELL_SPECS.map((s) => ({
+            key: s.key,
+            title: s.title,
+          }))}
+        />
+
         <section className="portal-form">
           <h2 className="portal-section-title">Creation path</h2>
           <p className="portal-section-hint">
             {CANVA_SHELL_CAPABILITY_ASSESSMENT.chosenCreationPath.id}
           </p>
           <p className="portal-section-hint">
-            Automated: PPTX layout → Canva Design Import → editable design URL.
-            Optional Brand Template publish is best-effort and never blocks
-            generation.
+            Automated: PPTX layout → Canva Design Import job → poll status →
+            editable design URL. The generate route returns job IDs immediately;
+            it does not hold the browser request open while Canva processes.
           </p>
           {generation?.generatedAt ? (
             <p className="portal-section-hint">
-              Last generation: {generation.generatedAt}
+              Last generation artifact: {generation.generatedAt}
             </p>
           ) : (
             <p className="portal-review-warn">
-              No generation artifact on this instance yet. Run{" "}
-              <code>POST /api/admin/canva/generate-shells</code> on Production
-              (uses <code>X-Admin-Secret</code>).
+              No local generation artifact on this instance. Use the generator
+              above on Production (requires <code>X-Admin-Secret</code>).
             </p>
           )}
         </section>
@@ -167,7 +174,7 @@ export default async function AdminShellsPage() {
                   </a>
                 ) : (
                   <span className="portal-section-hint">
-                    Canva edit link appears after Production generation.
+                    Canva edit link appears after a successful import job.
                   </span>
                 )}
                 {generated?.thumbnailUrl ? (
