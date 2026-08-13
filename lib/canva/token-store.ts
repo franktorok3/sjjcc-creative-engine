@@ -9,7 +9,7 @@ import type { CanvaTokenSet } from "./types";
  *
  * WARNING (Vercel / serverless): The local filesystem is ephemeral and not shared
  * across instances. Do NOT rely on this store in production on Vercel.
- * Use an external store (database table, Vercel KV, secrets manager, etc.).
+ * Prefer CANVA_ACCESS_TOKEN (+ REFRESH) env vars for the PoC.
  */
 
 const STORE_DIR = path.join(process.cwd(), ".data");
@@ -52,22 +52,56 @@ function decrypt(payload: string): string {
   ]).toString("utf8");
 }
 
-function tokensFromEnv(): CanvaTokenSet | null {
-  const accessToken = process.env.CANVA_ACCESS_TOKEN?.trim();
-  const refreshToken = process.env.CANVA_REFRESH_TOKEN?.trim();
+/**
+ * Decode a JWT payload without verifying the signature — used only to read `exp`.
+ * Never logs or returns the token.
+ */
+export function readJwtExpiryMs(accessToken: string): number | null {
+  const parts = accessToken.split(".");
+  if (parts.length < 2 || !parts[1]) return null;
+  try {
+    const json = Buffer.from(parts[1], "base64url").toString("utf8");
+    const payload = JSON.parse(json) as { exp?: unknown };
+    if (typeof payload.exp === "number" && Number.isFinite(payload.exp)) {
+      return payload.exp * 1000;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Build CanvaTokenSet from env. Expiry comes from the access-token JWT `exp`
+ * (or CANVA_TOKEN_EXPIRES_IN override). Never marks tokens as already-expired
+ * when expiry is unknown — that previously forced an immediate refresh.
+ */
+export function tokensFromEnv(
+  env: Record<string, string | undefined> = process.env,
+): CanvaTokenSet | null {
+  const accessToken = env.CANVA_ACCESS_TOKEN?.trim();
+  const refreshToken = env.CANVA_REFRESH_TOKEN?.trim();
   if (!accessToken || !refreshToken) return null;
 
-  // Treat env tokens as "soon to expire" so refresh runs when needed.
-  // If only access token is provided without expiry, refresh on first 401.
-  const expiresInSec = Number(process.env.CANVA_TOKEN_EXPIRES_IN ?? "0");
-  const expiresAt =
-    expiresInSec > 0 ? Date.now() + expiresInSec * 1000 : Date.now() - 1;
+  const expiresInSec = Number(env.CANVA_TOKEN_EXPIRES_IN ?? "0");
+  const jwtExpMs = readJwtExpiryMs(accessToken);
+
+  let expiresAt: number;
+  if (expiresInSec > 0) {
+    expiresAt = Date.now() + expiresInSec * 1000;
+  } else if (jwtExpMs != null) {
+    expiresAt = jwtExpMs;
+  } else {
+    // Non-JWT or missing exp: assume Canva's ~4h window so we do NOT refresh.
+    expiresAt = Date.now() + 4 * 60 * 60 * 1000;
+  }
 
   return {
     accessToken,
     refreshToken,
     expiresAt,
     tokenType: "Bearer",
+    source: "env",
   };
 }
 
@@ -77,7 +111,7 @@ export async function loadCanvaTokens(): Promise<CanvaTokenSet | null> {
     const decrypted = decrypt(raw.trim());
     const parsed = JSON.parse(decrypted) as StoredPayload;
     if (parsed?.tokens?.accessToken && parsed?.tokens?.refreshToken) {
-      return parsed.tokens;
+      return { ...parsed.tokens, source: parsed.tokens.source ?? "store" };
     }
   } catch {
     // Missing or unreadable store — fall through to env.
@@ -87,7 +121,6 @@ export async function loadCanvaTokens(): Promise<CanvaTokenSet | null> {
 
 export async function saveCanvaTokens(tokens: CanvaTokenSet): Promise<void> {
   // Vercel serverless: /var/task is read-only — never mkdir/write .data there.
-  // Persist via OAUTH_EXPORT_TOKENS → Vercel env (CANVA_ACCESS_TOKEN / REFRESH_TOKEN).
   if (process.env.VERCEL === "1") {
     console.warn(
       "[canva.token-store] VERCEL=1: skipping filesystem token write (read-only). Use OAUTH_EXPORT_TOKENS or CANVA_* env tokens.",
@@ -122,7 +155,6 @@ const oauthSessions = new Map<string, OauthSession>();
 const OAUTH_SESSION_TTL_MS = 10 * 60 * 1000;
 
 export function storeOauthSession(session: OauthSession): void {
-  // Prune expired sessions.
   const now = Date.now();
   for (const [key, value] of oauthSessions.entries()) {
     if (now - value.createdAt > OAUTH_SESSION_TTL_MS) {

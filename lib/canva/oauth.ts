@@ -173,9 +173,41 @@ export async function refreshCanvaAccessToken(
   return exchangeToken(body);
 }
 
+/** Single-flight: concurrent callers share one refresh attempt. */
+let refreshInFlight: Promise<CanvaTokenSet> | null = null;
+let refreshAttemptCount = 0;
+
+/** Test-only counter — never exposes token values. */
+export function getCanvaRefreshAttemptCountForTests(): number {
+  return refreshAttemptCount;
+}
+
+export function resetCanvaRefreshGuardForTests(): void {
+  refreshInFlight = null;
+  refreshAttemptCount = 0;
+}
+
+async function refreshCanvaAccessTokenSingleFlight(
+  refreshToken: string,
+): Promise<CanvaTokenSet> {
+  if (refreshInFlight) return refreshInFlight;
+  refreshAttemptCount += 1;
+  refreshInFlight = refreshCanvaAccessToken(refreshToken).finally(() => {
+    refreshInFlight = null;
+  });
+  return refreshInFlight;
+}
+
+const ACCESS_TOKEN_SKEW_MS = 60_000;
+
 /**
- * Returns a usable access token, refreshing when expired.
- * Prefer persisted store, then env vars.
+ * Returns a usable access token.
+ *
+ * Env-sourced tokens: use JWT `exp` from load; never auto-refresh.
+ * If still valid (not within 60s of expiry), return as-is.
+ * If expired, throw CANVA_REAUTH_REQUIRED (operator must reconnect).
+ *
+ * Store-sourced tokens (local): may refresh once via single-flight.
  */
 export async function getValidCanvaAccessToken(): Promise<string> {
   const tokens = await loadCanvaTokens();
@@ -186,17 +218,29 @@ export async function getValidCanvaAccessToken(): Promise<string> {
     );
   }
 
-  if (tokens.expiresAt > Date.now() + 30_000) {
+  if (tokens.expiresAt > Date.now() + ACCESS_TOKEN_SKEW_MS) {
     return tokens.accessToken;
   }
 
+  // PoC: env tokens must not auto-refresh (refresh tokens are single-use and
+  // cannot be persisted durably on Vercel).
+  if (tokens.source === "env") {
+    throw new CanvaAuthError(
+      "CANVA_REAUTH_REQUIRED",
+      "Canva access token from env is expired or near expiry. Revisit /api/canva/connect with OAUTH_EXPORT_TOKENS=1, copy the new tokens into Vercel, then disable export.",
+    );
+  }
+
   try {
-    const refreshed = await refreshCanvaAccessToken(tokens.refreshToken);
+    const refreshed = await refreshCanvaAccessTokenSingleFlight(
+      tokens.refreshToken,
+    );
     return refreshed.accessToken;
   } catch (error) {
-    if (tokens.accessToken) {
-      return tokens.accessToken;
-    }
-    throw error;
+    if (error instanceof CanvaAuthError) throw error;
+    throw new CanvaAuthError(
+      "CANVA_REAUTH_REQUIRED",
+      "Canva token refresh failed. Revisit /api/canva/connect and update Vercel env tokens.",
+    );
   }
 }

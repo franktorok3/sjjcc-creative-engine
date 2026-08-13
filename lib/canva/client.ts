@@ -1,10 +1,5 @@
 import "server-only";
-import {
-  CanvaAuthError,
-  getValidCanvaAccessToken,
-  refreshCanvaAccessToken,
-} from "./oauth";
-import { loadCanvaTokens } from "./token-store";
+import { CanvaAuthError, getValidCanvaAccessToken } from "./oauth";
 
 const CANVA_API_BASE = "https://api.canva.com/rest/v1";
 
@@ -31,8 +26,6 @@ type CanvaRequestOptions = {
   method?: "GET" | "POST" | "PATCH" | "DELETE";
   body?: unknown;
   query?: Record<string, string | undefined>;
-  /** Skip automatic 401 refresh retry */
-  skipRetry?: boolean;
 };
 
 export async function canvaFetch<T>(
@@ -53,22 +46,17 @@ export async function canvaFetch<T>(
     method: options.method ?? "GET",
     headers: {
       Authorization: `Bearer ${accessToken}`,
-      ...(options.body
-        ? { "Content-Type": "application/json" }
-        : {}),
+      ...(options.body ? { "Content-Type": "application/json" } : {}),
     },
     body: options.body ? JSON.stringify(options.body) : undefined,
   });
 
-  if (response.status === 401 && !options.skipRetry) {
-    const tokens = await loadCanvaTokens();
-    if (tokens?.refreshToken) {
-      await refreshCanvaAccessToken(tokens.refreshToken);
-      return canvaFetch<T>(path, { ...options, skipRetry: true });
-    }
+  // PoC: do not auto-refresh on 401 — Canva refresh tokens are single-use and
+  // env persistence cannot rotate them atomically on Vercel.
+  if (response.status === 401 || response.status === 403) {
     throw new CanvaAuthError(
-      "CANVA_AUTH_REQUIRED",
-      "Canva access token rejected and no refresh token available",
+      "CANVA_REAUTH_REQUIRED",
+      `Canva rejected the access token (${response.status}). Revisit /api/canva/connect and update Vercel env tokens.`,
     );
   }
 
@@ -85,9 +73,7 @@ export async function canvaFetch<T>(
   if (!response.ok) {
     const record = (json ?? {}) as Record<string, unknown>;
     const code =
-      typeof record.code === "string"
-        ? record.code
-        : `HTTP_${response.status}`;
+      typeof record.code === "string" ? record.code : `HTTP_${response.status}`;
     const message =
       typeof record.message === "string"
         ? record.message

@@ -1,11 +1,6 @@
 import "server-only";
 import { CanvaApiError } from "./client";
-import {
-  CanvaAuthError,
-  getValidCanvaAccessToken,
-  refreshCanvaAccessToken,
-} from "./oauth";
-import { loadCanvaTokens } from "./token-store";
+import { CanvaAuthError, getValidCanvaAccessToken } from "./oauth";
 
 const CANVA_API_BASE = "https://api.canva.com/rest/v1";
 
@@ -41,7 +36,7 @@ export async function uploadCanvaImageAsset(input: {
   const name = input.name.trim().slice(0, 50) || "Creative Engine QR";
   const nameBase64 = Buffer.from(name, "utf8").toString("base64");
 
-  let accessToken = await getValidCanvaAccessToken();
+  const accessToken = await getValidCanvaAccessToken();
   const uploadOnce = async (token: string) =>
     fetch(`${CANVA_API_BASE}/asset-uploads`, {
       method: "POST",
@@ -53,14 +48,13 @@ export async function uploadCanvaImageAsset(input: {
       body: new Uint8Array(input.bytes),
     });
 
-  let response = await uploadOnce(accessToken);
-  if (response.status === 401) {
-    const tokens = await loadCanvaTokens();
-    if (tokens?.refreshToken) {
-      await refreshCanvaAccessToken(tokens.refreshToken);
-      accessToken = await getValidCanvaAccessToken();
-      response = await uploadOnce(accessToken);
-    }
+  const response = await uploadOnce(accessToken);
+  // PoC: no automatic refresh retry on 401 (single-use refresh tokens).
+  if (response.status === 401 || response.status === 403) {
+    throw new CanvaAuthError(
+      "CANVA_REAUTH_REQUIRED",
+      `Canva asset upload rejected auth (${response.status}). Revisit /api/canva/connect and update Vercel env tokens.`,
+    );
   }
 
   const text = await response.text();
