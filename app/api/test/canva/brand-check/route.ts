@@ -6,35 +6,30 @@ import {
 } from "@/config/canva-brand";
 import { CanvaApiError } from "@/lib/canva/client";
 import { CanvaAuthError } from "@/lib/canva/oauth";
-import {
-  prioritizeAiMarketingTemplates,
-  validateBrandTemplateStructure,
-} from "@/lib/canva/brand-validation";
+import { validateBrandTemplateStructure } from "@/lib/canva/brand-validation";
 import {
   getBrandTemplateDataset,
   getConfiguredBrandTemplateId,
   listBrandTemplates,
+  sanitizeBrandTemplate,
 } from "@/lib/canva/templates";
 import type { CanvaBrandTemplateDataset } from "@/lib/canva/types";
 
 export const runtime = "nodejs";
 
 /**
- * Read-only brand discovery + structure check for AI Marketing 2.0.
- * Does not guess dataset keys. Reports live fields vs configured roles.
+ * Read-only brand discovery + structure check.
+ * Does not guess dataset keys or auto-select a Brand Template ID.
  */
 export async function GET() {
   try {
-    const listed = await listBrandTemplates({ limit: 50 });
-    const prioritized = prioritizeAiMarketingTemplates(listed.items);
+    const listed = await listBrandTemplates({ limit: 100 });
 
     let templateId: string | null = null;
     try {
       templateId = getConfiguredBrandTemplateId();
     } catch {
-      templateId = prioritized.preferred[0]?.id
-        ? String(prioritized.preferred[0].id)
-        : null;
+      templateId = null;
     }
 
     let dataset: CanvaBrandTemplateDataset = {};
@@ -47,16 +42,13 @@ export async function GET() {
     return NextResponse.json({
       success: true,
       brandKitRequired: CANVA_BRAND_KIT_NAME,
+      note: "Brand Kit membership cannot be confirmed through the current Connect API response; select the intended template by its actual title and ID.",
       queryUsed: listed.queryUsed ?? null,
       selectedTemplateId: templateId,
       selectedTemplateTitle:
         listed.items.find((t) => String(t.id) === String(templateId))?.title ??
-        prioritized.preferred[0]?.title ??
         null,
-      templatesPreferred: prioritized.preferred.map((t) => ({
-        id: t.id,
-        title: t.title,
-      })),
+      templates: listed.items.map(sanitizeBrandTemplate),
       liveDatasetFields: dataset,
       configuredVariableRoles: VARIABLE_DATASET_FIELD_ROLES,
       configuredLockedFields: LOCKED_BRAND_DATASET_FIELDS,
@@ -68,10 +60,7 @@ export async function GET() {
           "qr_placement_zone",
           "margins_structural_layout",
         ],
-        controlledVariableContent: [
-          "qr_image_asset",
-          "qr_destination_url",
-        ],
+        controlledVariableContent: ["qr_image_asset", "qr_destination_url"],
         qrCodeField: {
           role: "controlled_variable_image",
           formMapping: "forbidden",
@@ -82,7 +71,7 @@ export async function GET() {
       },
       structure,
       nextSteps: [
-        "Confirm an AI Marketing 2.0 Brand Template is selected (CANVA_BRAND_TEMPLATE_ID).",
+        "Set CANVA_BRAND_TEMPLATE_ID to the exact Brand Template id from GET /api/test/canva/templates — do not guess.",
         "Replace VARIABLE_DATASET_FIELD_ROLES / FORM_TO_CANVA_FIELD_MAP Canva keys with liveDatasetFields names — do not guess.",
         "Ensure the template embeds the bottom brand bar + SJJCC/UJA logos as locked chrome (not Autofill content).",
         "Ensure a QR image autofill slot sits bottom-right above the brand bar (position locked; image content variable via preprocessing).",

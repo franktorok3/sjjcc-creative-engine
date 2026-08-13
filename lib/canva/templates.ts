@@ -1,26 +1,61 @@
 import "server-only";
-import { CANVA_BRAND_KIT_QUERY } from "@/config/canva-brand";
 import { canvaFetch } from "./client";
 import type {
   CanvaBrandTemplate,
   CanvaBrandTemplateDataset,
 } from "./types";
 
+/** Sanitized Brand Template discovery row — no secrets. */
+export type BrandTemplateDiscoveryItem = {
+  id: string;
+  title: string | null;
+  thumbnailUrl: string | null;
+  createdAt: number | null;
+  updatedAt: number | null;
+};
+
+export function sanitizeBrandTemplate(
+  template: CanvaBrandTemplate,
+): BrandTemplateDiscoveryItem {
+  return {
+    id: String(template.id),
+    title: template.title?.trim() ? template.title.trim() : null,
+    thumbnailUrl: template.thumbnail?.url ?? null,
+    createdAt:
+      typeof template.created_at === "number" ? template.created_at : null,
+    updatedAt:
+      typeof template.updated_at === "number" ? template.updated_at : null,
+  };
+}
+
+/** Optional case-insensitive title filter (template titles only). */
+export function filterBrandTemplatesByTitle(
+  templates: CanvaBrandTemplate[],
+  titleQuery?: string,
+): CanvaBrandTemplate[] {
+  const q = titleQuery?.trim().toLowerCase();
+  if (!q) return templates;
+  return templates.filter((template) =>
+    (template.title ?? "").toLowerCase().includes(q),
+  );
+}
+
+/**
+ * List Brand Templates from Canva Connect.
+ * Does NOT default to any Brand Kit name query — kit membership cannot be
+ * confirmed from the Brand Template response.
+ */
 export async function listBrandTemplates(params?: {
+  /** Optional Canva API search query (caller-supplied only). */
   query?: string;
   continuation?: string;
   limit?: number;
-  /** When true (default), prefer AI Marketing 2.0 search query if none provided. */
-  preferAiMarketingKit?: boolean;
 }): Promise<{
   items: CanvaBrandTemplate[];
   continuation?: string;
   queryUsed: string | undefined;
 }> {
-  const preferAiMarketingKit = params?.preferAiMarketingKit !== false;
-  const query =
-    params?.query?.trim() ||
-    (preferAiMarketingKit ? CANVA_BRAND_KIT_QUERY : undefined);
+  const query = params?.query?.trim() || undefined;
 
   const response = await canvaFetch<{
     items?: CanvaBrandTemplate[];

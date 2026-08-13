@@ -1,52 +1,53 @@
 import { NextResponse } from "next/server";
-import { CanvaApiError, getCanvaCurrentUser, getCanvaUserProfile } from "@/lib/canva/client";
+import {
+  CanvaApiError,
+  getCanvaCurrentUser,
+  getCanvaUserProfile,
+} from "@/lib/canva/client";
 import { CanvaAuthError } from "@/lib/canva/oauth";
 import {
-  CANVA_BRAND_KIT_NAME,
-  CANVA_BRAND_KIT_QUERY,
-} from "@/config/canva-brand";
-import { prioritizeAiMarketingTemplates } from "@/lib/canva/brand-validation";
-import { listBrandTemplates } from "@/lib/canva/templates";
+  filterBrandTemplatesByTitle,
+  listBrandTemplates,
+  sanitizeBrandTemplate,
+} from "@/lib/canva/templates";
 
 export const runtime = "nodejs";
 
 /**
- * TEST 1 + TEST 2 helper:
- * Confirms Canva auth, then lists Brand Templates with AI Marketing 2.0 prioritized.
+ * List ALL accessible Canva Brand Templates (sanitized).
+ * Optional ?q=<text> filters by template title only.
+ * Does not assume Brand Kit membership from titles or API fields.
+ * Does not select CANVA_BRAND_TEMPLATE_ID.
  */
-export async function GET() {
+export async function GET(request: Request) {
   try {
+    const url = new URL(request.url);
+    const titleFilter = url.searchParams.get("q") ?? undefined;
+
     const [me, profile, templates] = await Promise.all([
       getCanvaCurrentUser(),
       getCanvaUserProfile().catch(() => null),
-      listBrandTemplates({ limit: 50 }),
+      // No Brand Kit name query — list all accessible templates.
+      listBrandTemplates({ limit: 100 }),
     ]);
 
-    const prioritized = prioritizeAiMarketingTemplates(templates.items);
+    const filtered = filterBrandTemplatesByTitle(templates.items, titleFilter);
+    const sanitized = filtered.map(sanitizeBrandTemplate);
 
     return NextResponse.json({
       success: true,
       authenticated: true,
-      brandKit: {
-        requiredName: CANVA_BRAND_KIT_NAME,
-        queryUsed: templates.queryUsed ?? null,
-        note: "Canva Connect has no Brand Kit selector API — templates are filtered/prioritized by title match to AI Marketing 2.0.",
-      },
+      note: "Brand Kit membership cannot be confirmed through the current Connect API response; select the intended template by its actual title and ID.",
       user: {
         userId: me.team_user?.user_id ?? null,
         teamId: me.team_user?.team_id ?? null,
         displayName: profile?.profile?.display_name ?? me.display_name ?? null,
       },
-      templatesPreferred: prioritized.preferred,
-      templatesOther: prioritized.other,
-      templatesRejectedGeneric: prioritized.rejectedGeneric,
-      templates: [
-        ...prioritized.preferred,
-        ...prioritized.other,
-      ],
+      titleFilter: titleFilter?.trim() || null,
+      templateCount: sanitized.length,
+      templates: sanitized,
       continuation: templates.continuation ?? null,
       configuredTemplateId: process.env.CANVA_BRAND_TEMPLATE_ID ?? null,
-      discoveryHint: `Prefer templates under Brand Kit "${CANVA_BRAND_KIT_NAME}" (query: "${CANVA_BRAND_KIT_QUERY}"). Do not use generic Brand Kit / Marketing's Team templates.`,
     });
   } catch (error) {
     if (error instanceof CanvaAuthError) {
