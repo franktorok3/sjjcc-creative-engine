@@ -6,10 +6,44 @@ import { BrandStructureError } from "@/lib/canva/brand-validation";
 import { CanvaApiError } from "@/lib/canva/client";
 import { CanvaAuthError } from "@/lib/canva/oauth";
 import { QrGenerationError } from "@/lib/canva/qr";
+import {
+  CreativeEngineError,
+  CreativeValidationError,
+  DatasetMismatchError,
+  NoApprovedTemplateError,
+} from "@/lib/creative/errors";
 import { MappingError } from "@/lib/creative/mapping";
 
 /** Shared sanitized workflow error → HTTP response for intake routes. */
 export function workflowErrorResponse(requestId: string, error: unknown) {
+  if (
+    error instanceof NoApprovedTemplateError ||
+    error instanceof DatasetMismatchError ||
+    error instanceof CreativeValidationError
+  ) {
+    return NextResponse.json(
+      {
+        success: false,
+        error: error.code,
+        message: error.message,
+        requestId,
+        ...(error.details ? { details: error.details } : {}),
+      },
+      { status: 422 },
+    );
+  }
+  if (error instanceof CreativeEngineError) {
+    return NextResponse.json(
+      {
+        success: false,
+        error: error.code,
+        message: error.message,
+        requestId,
+        ...(error.details ? { details: error.details } : {}),
+      },
+      { status: 400 },
+    );
+  }
   if (error instanceof MappingError || error instanceof BrandStructureError) {
     return NextResponse.json(
       {
