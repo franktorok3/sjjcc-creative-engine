@@ -10,7 +10,7 @@ import { validateBrandTemplateStructure } from "@/lib/canva/brand-validation";
 import {
   getBrandTemplateDataset,
   getConfiguredBrandTemplateId,
-  listBrandTemplates,
+  listAllBrandTemplates,
   sanitizeBrandTemplate,
 } from "@/lib/canva/templates";
 import type { CanvaBrandTemplateDataset } from "@/lib/canva/types";
@@ -23,7 +23,7 @@ export const runtime = "nodejs";
  */
 export async function GET() {
   try {
-    const listed = await listBrandTemplates({ limit: 100 });
+    const listed = await listAllBrandTemplates({ limit: 100, dataset: "any" });
 
     let templateId: string | null = null;
     try {

@@ -7,7 +7,7 @@ import {
 import { CanvaAuthError } from "@/lib/canva/oauth";
 import {
   filterBrandTemplatesByTitle,
-  listBrandTemplates,
+  listAllBrandTemplates,
   sanitizeBrandTemplate,
 } from "@/lib/canva/templates";
 
@@ -27,8 +27,8 @@ export async function GET(request: Request) {
     const [me, profile, templates] = await Promise.all([
       getCanvaCurrentUser(),
       getCanvaUserProfile().catch(() => null),
-      // No Brand Kit name query — list all accessible templates.
-      listBrandTemplates({ limit: 100 }),
+      // No Brand Kit name query — list all accessible templates (dataset=any).
+      listAllBrandTemplates({ limit: 100, dataset: "any" }),
     ]);
 
     const filtered = filterBrandTemplatesByTitle(templates.items, titleFilter);
@@ -45,8 +45,8 @@ export async function GET(request: Request) {
       },
       titleFilter: titleFilter?.trim() || null,
       templateCount: sanitized.length,
+      pagesFetched: templates.pagesFetched,
       templates: sanitized,
-      continuation: templates.continuation ?? null,
       configuredTemplateId: process.env.CANVA_BRAND_TEMPLATE_ID ?? null,
     });
   } catch (error) {

@@ -44,18 +44,22 @@ export function filterBrandTemplatesByTitle(
  * List Brand Templates from Canva Connect.
  * Does NOT default to any Brand Kit name query — kit membership cannot be
  * confirmed from the Brand Template response.
+ * Uses dataset=any so templates without autofill fields are still listed.
  */
 export async function listBrandTemplates(params?: {
   /** Optional Canva API search query (caller-supplied only). */
   query?: string;
   continuation?: string;
   limit?: number;
+  /** Default "any" — list all templates; "non_empty" for autofill-ready only. */
+  dataset?: "any" | "non_empty";
 }): Promise<{
   items: CanvaBrandTemplate[];
   continuation?: string;
   queryUsed: string | undefined;
 }> {
   const query = params?.query?.trim() || undefined;
+  const dataset = params?.dataset ?? "any";
 
   const response = await canvaFetch<{
     items?: CanvaBrandTemplate[];
@@ -65,7 +69,9 @@ export async function listBrandTemplates(params?: {
       query,
       continuation: params?.continuation,
       limit: params?.limit ? String(params.limit) : undefined,
-      dataset: "non_empty",
+      dataset,
+      ownership: "any",
+      sort_by: "title_ascending",
     },
   });
 
@@ -74,6 +80,41 @@ export async function listBrandTemplates(params?: {
     continuation: response.continuation,
     queryUsed: query,
   };
+}
+
+/**
+ * Fetch all Brand Template pages (follows continuation). Cap pages for safety.
+ */
+export async function listAllBrandTemplates(params?: {
+  query?: string;
+  limit?: number;
+  dataset?: "any" | "non_empty";
+  maxPages?: number;
+}): Promise<{
+  items: CanvaBrandTemplate[];
+  queryUsed: string | undefined;
+  pagesFetched: number;
+}> {
+  const maxPages = params?.maxPages ?? 20;
+  const items: CanvaBrandTemplate[] = [];
+  let continuation: string | undefined;
+  let queryUsed: string | undefined;
+  let pagesFetched = 0;
+
+  do {
+    const page = await listBrandTemplates({
+      query: params?.query,
+      limit: params?.limit ?? 100,
+      dataset: params?.dataset ?? "any",
+      continuation,
+    });
+    pagesFetched += 1;
+    queryUsed = page.queryUsed;
+    items.push(...page.items);
+    continuation = page.continuation;
+  } while (continuation && pagesFetched < maxPages);
+
+  return { items, queryUsed, pagesFetched };
 }
 
 export async function getBrandTemplateDataset(
