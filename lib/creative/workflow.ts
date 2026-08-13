@@ -19,14 +19,15 @@ import {
   getPromotionName,
   mapFormFieldsToCanvaDataSafe,
 } from "@/lib/creative/branded-mapping";
+import type { CreativeWorkflowPayload } from "@/lib/creative/creative-request";
 import { logFailed, logMilestone } from "@/lib/creative/logging";
 import { MappingError } from "@/lib/creative/mapping";
 
-export type FormSubmitPayload = {
-  source: "google_form";
-  submittedAt: string;
-  fields: Record<string, unknown>;
-};
+/** @deprecated Prefer CreativeWorkflowPayload — kept for Google Form callers. */
+export type FormSubmitPayload = Extract<
+  CreativeWorkflowPayload,
+  { source: "google_form" }
+>;
 
 export type WorkflowSuccess = {
   success: true;
@@ -38,12 +39,20 @@ export type WorkflowSuccess = {
   qrAssetId?: string;
 };
 
+/**
+ * Shared Creative Engine path for Google Form and the native portal.
+ * Both sources must normalize into CreativeWorkflowPayload first.
+ */
 export async function runFormToCanvaToBasecampWorkflow(
-  payload: FormSubmitPayload,
+  payload: CreativeWorkflowPayload,
   requestId: string,
 ): Promise<WorkflowSuccess> {
   try {
-    logMilestone(requestId, "FORM_RECEIVED");
+    logMilestone(
+      requestId,
+      "FORM_RECEIVED",
+      `source=${payload.source}`,
+    );
 
     const fields = flattenNamedValues(payload.fields);
     assertRequiredFormFields(fields);

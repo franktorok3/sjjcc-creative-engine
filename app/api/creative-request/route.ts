@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
-import { z } from "zod";
-import { assertWebhookConfigured } from "@/lib/creative/env";
-import { googleFormToWorkflowPayload } from "@/lib/creative/creative-request";
+import {
+  portalCreativeRequestSchema,
+  portalRequestToWorkflowPayload,
+} from "@/lib/creative/creative-request";
 import {
   buildIdempotencyKey,
   getIdempotentResult,
@@ -17,43 +18,19 @@ import {
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-const formSubmitSchema = z.object({
-  source: z.literal("google_form"),
-  submittedAt: z.string().min(1),
-  fields: z.record(z.string(), z.unknown()),
-});
-
-function timingSafeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let mismatch = 0;
-  for (let i = 0; i < a.length; i += 1) {
-    mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  }
-  return mismatch === 0;
-}
-
 /**
- * Google Form webhook intake (unchanged contract).
- * Normalizes into the shared Creative Engine workflow.
+ * Native Creative Engine Portal intake.
+ * Normalizes into the same workflow payload as Google Form → /api/form-submit.
+ * No webhook secret (browser form); Google Form path stays unchanged.
  */
 export async function POST(request: Request) {
   const requestId = createRequestId();
 
   try {
-    const expectedSecret = assertWebhookConfigured();
-    const provided = request.headers.get("x-webhook-secret") ?? "";
-    if (!timingSafeEqual(provided, expectedSecret)) {
-      logFailed(requestId, "auth", "Invalid X-Webhook-Secret");
-      return NextResponse.json(
-        { success: false, error: "UNAUTHORIZED", requestId },
-        { status: 401 },
-      );
-    }
-
-    const json = await request.json();
-    const parsed = formSubmitSchema.safeParse(json);
+    const json = await request.json().catch(() => null);
+    const parsed = portalCreativeRequestSchema.safeParse(json);
     if (!parsed.success) {
-      logFailed(requestId, "validation", "Invalid payload shape");
+      logFailed(requestId, "validation", "Invalid portal payload");
       return NextResponse.json(
         {
           success: false,
@@ -65,7 +42,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const payload = googleFormToWorkflowPayload(parsed.data);
+    const payload = portalRequestToWorkflowPayload(parsed.data);
     const idempotencyKey = buildIdempotencyKey({
       submittedAt: payload.submittedAt,
       fields: payload.fields,

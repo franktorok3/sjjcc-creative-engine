@@ -35,6 +35,10 @@ export function flattenNamedValues(
 }
 
 export function getPromotionName(fields: Record<string, string>): string {
+  // Portal sends Program / Event Name separately from Headline (Canva map).
+  const fromProgram = fields["Program / Event Name"]?.trim();
+  if (fromProgram) return fromProgram;
+
   const fromConfigured = fields[PROMOTION_NAME_FORM_FIELD]?.trim();
   if (fromConfigured) return fromConfigured;
 
