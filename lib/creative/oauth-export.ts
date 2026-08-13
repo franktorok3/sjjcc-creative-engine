@@ -4,16 +4,21 @@ import "server-only";
  * Temporary PoC helper: optionally export OAuth tokens in callback JSON
  * so they can be pasted into Vercel env vars (filesystem is ephemeral).
  *
- * Enable only with OAUTH_EXPORT_TOKENS=1, then disable after copying.
+ * Enable with OAUTH_EXPORT_TOKENS set to 1/true/yes/on (case-insensitive),
+ * then disable after copying.
  */
 
 export const OAUTH_TOKEN_EXPORT_WARNING =
   "TEMPORARY POC TOKEN EXPORT — disable OAUTH_EXPORT_TOKENS after copying values.";
 
+const OAUTH_EXPORT_TRUTHY = new Set(["1", "true", "yes", "on"]);
+
 export function isOauthTokenExportEnabled(
   env: Record<string, string | undefined> = process.env,
 ): boolean {
-  return env.OAUTH_EXPORT_TOKENS === "1";
+  const raw = env.OAUTH_EXPORT_TOKENS;
+  if (raw == null) return false;
+  return OAUTH_EXPORT_TRUTHY.has(raw.trim().toLowerCase());
 }
 
 export function oauthTokenExportHeaders(): Record<string, string> {
@@ -45,6 +50,7 @@ export function attachOptionalTokenExport<T extends Record<string, unknown>>(
   tokens: Record<string, string | null | undefined>,
   env: Record<string, string | undefined> = process.env,
 ): T & {
+  tokenExportEnabled: boolean;
   tokenExport?: "disabled" | "enabled";
   warning?: string;
   vercelEnv?: Record<string, string | null>;
@@ -53,6 +59,7 @@ export function attachOptionalTokenExport<T extends Record<string, unknown>>(
   if (!enabled) {
     return {
       ...body,
+      tokenExportEnabled: false,
       tokenExport: "disabled",
     };
   }
@@ -64,6 +71,7 @@ export function attachOptionalTokenExport<T extends Record<string, unknown>>(
 
   return {
     ...body,
+    tokenExportEnabled: true,
     tokenExport: "enabled",
     warning: OAUTH_TOKEN_EXPORT_WARNING,
     vercelEnv,

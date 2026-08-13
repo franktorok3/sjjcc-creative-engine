@@ -150,12 +150,30 @@ describe("encrypted OAuth state validation", () => {
 });
 
 describe("OAUTH_EXPORT_TOKENS temporary token export", () => {
-  it("reports disabled when flag is not exactly 1", () => {
+  it("treats trimmed lowercase 1/true/yes/on as enabled", () => {
+    for (const value of ["1", "true", "yes", "on", " TRUE ", "Yes", "On"]) {
+      expect(isOauthTokenExportEnabled({ OAUTH_EXPORT_TOKENS: value })).toBe(
+        true,
+      );
+    }
+  });
+
+  it("treats missing and non-accepted values as disabled", () => {
     expect(isOauthTokenExportEnabled({})).toBe(false);
-    expect(isOauthTokenExportEnabled({ OAUTH_EXPORT_TOKENS: "true" })).toBe(
+    expect(isOauthTokenExportEnabled({ OAUTH_EXPORT_TOKENS: undefined })).toBe(
       false,
     );
+    expect(isOauthTokenExportEnabled({ OAUTH_EXPORT_TOKENS: "" })).toBe(false);
     expect(isOauthTokenExportEnabled({ OAUTH_EXPORT_TOKENS: "0" })).toBe(false);
+    expect(isOauthTokenExportEnabled({ OAUTH_EXPORT_TOKENS: "false" })).toBe(
+      false,
+    );
+    expect(isOauthTokenExportEnabled({ OAUTH_EXPORT_TOKENS: "off" })).toBe(
+      false,
+    );
+    expect(isOauthTokenExportEnabled({ OAUTH_EXPORT_TOKENS: "enabled" })).toBe(
+      false,
+    );
   });
 
   it("omits vercelEnv tokens when export is disabled", () => {
@@ -168,30 +186,34 @@ describe("OAUTH_EXPORT_TOKENS temporary token export", () => {
       { OAUTH_EXPORT_TOKENS: "0" },
     );
 
+    expect(body.tokenExportEnabled).toBe(false);
     expect(body.tokenExport).toBe("disabled");
     expect(body.vercelEnv).toBeUndefined();
     expect(JSON.stringify(body)).not.toContain("access-secret");
     expect(JSON.stringify(body)).not.toContain("refresh-secret");
   });
 
-  it("includes vercelEnv tokens only when OAUTH_EXPORT_TOKENS=1", () => {
-    const body = attachOptionalTokenExport(
-      { success: true },
-      {
+  it("includes vercelEnv tokens when OAUTH_EXPORT_TOKENS is accepted", () => {
+    for (const flag of ["1", "true", "yes", "on"]) {
+      const body = attachOptionalTokenExport(
+        { success: true },
+        {
+          BASECAMP_ACCESS_TOKEN: "bc-access",
+          BASECAMP_REFRESH_TOKEN: "bc-refresh",
+          BASECAMP_ACCOUNT_ID: "123",
+        },
+        { OAUTH_EXPORT_TOKENS: flag },
+      );
+
+      expect(body.tokenExportEnabled).toBe(true);
+      expect(body.tokenExport).toBe("enabled");
+      expect(body.warning).toBe(OAUTH_TOKEN_EXPORT_WARNING);
+      expect(body.vercelEnv).toEqual({
         BASECAMP_ACCESS_TOKEN: "bc-access",
         BASECAMP_REFRESH_TOKEN: "bc-refresh",
         BASECAMP_ACCOUNT_ID: "123",
-      },
-      { OAUTH_EXPORT_TOKENS: "1" },
-    );
-
-    expect(body.tokenExport).toBe("enabled");
-    expect(body.warning).toBe(OAUTH_TOKEN_EXPORT_WARNING);
-    expect(body.vercelEnv).toEqual({
-      BASECAMP_ACCESS_TOKEN: "bc-access",
-      BASECAMP_REFRESH_TOKEN: "bc-refresh",
-      BASECAMP_ACCOUNT_ID: "123",
-    });
+      });
+    }
   });
 
   it("adds no-store headers when tokens are exported", () => {
