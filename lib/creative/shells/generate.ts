@@ -22,6 +22,7 @@ import {
   validateShellSpec,
   type ShellValidationReport,
 } from "@/lib/creative/shells/validate";
+import { SHELL_FINISHING_CHECKLIST } from "@/config/shell-finishing-checklist";
 
 export type GeneratedShellResult = {
   key: string;
@@ -38,11 +39,17 @@ export type GeneratedShellResult = {
   designEditUrl: string | null;
   designViewUrl: string | null;
   thumbnailUrl: string | null;
+  importJobId: string;
+  importJobStatus: "success" | "failed" | "in_progress";
+  editableImportConfirmed: boolean;
   brandTemplateId: string | null;
   brandTemplateViewUrl: string | null;
   publishAttempted: boolean;
   publishSucceeded: boolean;
   publishError: string | null;
+  manualPublishRequired: boolean;
+  AutofillBindingRequired: true;
+  logoReplacementRequired: boolean;
   autofillFieldsCreated: false;
   autofillStatus: "not_created_via_api";
   liveDatasetFieldCount: number;
@@ -51,6 +58,7 @@ export type GeneratedShellResult = {
   lockedBrandElements: string[];
   validation: ShellValidationReport;
   missingLogoAssetEnv: string[];
+  finishingChecklist: string[];
   manualStepsRemaining: string[];
   registryCandidate: CreativeTemplate;
 };
@@ -62,13 +70,19 @@ export type GenerateShellsReport = {
   note: string;
 };
 
+const FINISHING_CHECKLIST = SHELL_FINISHING_CHECKLIST;
+
 /**
  * Generate the initial CE shell family:
  * PPTX → Canva design import → optional Brand Template publish attempt.
+ *
+ * First successful operational target is an editable Canva design URL.
+ * Brand Template publication is best-effort and never blocks generation.
  * Does NOT mark templates approved. Does NOT invent Autofill fields.
  */
 export async function generateCreativeShells(options?: {
   keys?: string[];
+  /** Default true — attempt publish; denial sets manualPublishRequired. */
   attemptPublish?: boolean;
 }): Promise<GenerateShellsReport> {
   const attemptPublish = options?.attemptPublish !== false;
@@ -86,7 +100,7 @@ export async function generateCreativeShells(options?: {
     success: true,
     capabilityAssessment: CANVA_SHELL_CAPABILITY_ASSESSMENT,
     shells,
-    note: "Autofill datasets cannot be created via Connect API. Operator must bind Data Autofill fields and approve registry entries after verification.",
+    note: "Editable Canva designs created via PPTX import. Autofill binding and Brand Kit logo replacement remain one-time operator steps. Candidates stay approved=false.",
   };
 }
 
@@ -124,6 +138,7 @@ async function generateOneShell(
       brandTemplateViewUrl = published.viewUrl;
       publishSucceeded = true;
     } catch (error) {
+      // Do not fail generation — scopes may lack brandtemplate:content:write
       publishSucceeded = false;
       if (error instanceof CanvaApiError) {
         publishError = `${error.code}: ${error.message}`;
@@ -134,6 +149,8 @@ async function generateOneShell(
       }
     }
   }
+
+  const manualPublishRequired = !publishSucceeded;
 
   let liveDataset: Record<string, { type: string }> = {};
   try {
@@ -153,26 +170,28 @@ async function generateOneShell(
 
   const { widthPx, heightPx } = shellSpecToPixels(spec);
   const missingLogoAssetEnv = missingApprovedLogoAssetIds(getApprovedLogoAssets());
+  const logoReplacementRequired = true;
 
+  const finishingChecklist = [...FINISHING_CHECKLIST];
   const manualSteps: string[] = [
-    ...CANVA_SHELL_CAPABILITY_ASSESSMENT.manualStepsRemaining,
+    "Replace [[SJJCC_LOGO_LOCKUP]] and [[UJA_LOGO]] with approved Brand Kit assets",
+    "Bind Data Autofill fields to visible [[FIELD]] markers",
+    "Bind [[QR_CODE]] as an image Autofill field",
+    "Confirm QR sits above the brand bar",
   ];
-  if (missingLogoAssetEnv.length > 0) {
-    manualSteps.unshift(
-      `Approved logo asset IDs missing (${missingLogoAssetEnv.join(", ")}). Replace logo zone markers with Brand Kit logos in Canva.`,
+  if (manualPublishRequired) {
+    manualSteps.push(
+      "Publish the design as a Brand Template in Canva (API publish unavailable or denied)",
     );
   }
-  if (!publishSucceeded) {
-    manualSteps.unshift(
-      "Publish the imported design as a Brand Template in Canva (API publish unavailable or denied).",
-    );
-  }
+  manualSteps.push(
+    "Run dataset inspection, then set approved=true only after verification",
+  );
 
   const dataset: CreativeTemplate["dataset"] = {};
   for (const role of spec.requiredAutofillRoles) {
     dataset[role] = role === "QR_CODE" || role === "HERO_IMAGE" ? "image" : "text";
   }
-  // HERO_IMAGE optional — include when zone exists
   if (spec.optionalAutofillRoles.includes("HERO_IMAGE")) {
     dataset.HERO_IMAGE = "image";
   }
@@ -212,11 +231,17 @@ async function generateOneShell(
     designEditUrl: imported.editUrl,
     designViewUrl: imported.viewUrl,
     thumbnailUrl: imported.thumbnailUrl,
+    importJobId: imported.jobId,
+    importJobStatus: imported.importJobStatus,
+    editableImportConfirmed: imported.editableImportConfirmed,
     brandTemplateId,
     brandTemplateViewUrl,
     publishAttempted,
     publishSucceeded,
     publishError,
+    manualPublishRequired,
+    AutofillBindingRequired: true,
+    logoReplacementRequired,
     autofillFieldsCreated: false,
     autofillStatus: "not_created_via_api",
     liveDatasetFieldCount: liveDatasetFields.length,
@@ -233,15 +258,12 @@ async function generateOneShell(
     ],
     validation,
     missingLogoAssetEnv,
+    finishingChecklist,
     manualStepsRemaining: manualSteps,
     registryCandidate,
   };
 }
 
-/**
- * Build registry candidates from generation results (approved=false).
- * Prefer real brandTemplateId when publish succeeded.
- */
 export function candidatesFromGeneration(
   shells: GeneratedShellResult[],
 ): CreativeTemplate[] {

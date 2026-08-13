@@ -70,6 +70,20 @@ describe("creative shell specs", () => {
       expect(spec.qrZone.y + spec.qrZone.height).toBeLessThanOrEqual(brandBarY);
     }
   });
+  it("uses visible [[FIELD]] operator markers including logos", () => {
+    for (const spec of CREATIVE_SHELL_SPECS) {
+      const placeholders = spec.contentZones.map((z) => z.placeholder);
+      expect(placeholders).toContain("[[HEADLINE]]");
+      expect(placeholders).toContain("[[DESCRIPTION]]");
+      expect(placeholders).toContain("[[DATE]]");
+      expect(placeholders).toContain("[[TIME]]");
+      expect(placeholders).toContain("[[LOCATION]]");
+      expect(placeholders).toContain("[[CTA]]");
+      expect(placeholders).toContain("[[QR_CODE]]");
+      expect(placeholders).toContain("[[SJJCC_LOGO_LOCKUP]]");
+      expect(placeholders).toContain("[[UJA_LOGO]]");
+    }
+  });
 });
 
 describe("shell pptx builder", () => {

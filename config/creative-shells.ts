@@ -37,8 +37,14 @@ export type ShellContentZone = {
   maxLines?: number;
   autofill: boolean;
   locked: boolean;
+  /** Visible operator marker, e.g. [[HEADLINE]] */
   placeholder: string;
 };
+
+/** Operator-visible Autofill / logo markers for Data Autofill binding. */
+export function fieldMarker(role: string): string {
+  return `[[${role}]]`;
+}
 
 export type CreativeShellSpec = {
   key: string;
@@ -108,7 +114,7 @@ function flyerStandardLight(): CreativeShellSpec {
         height: 2.6,
         autofill: true,
         locked: false,
-        placeholder: "HERO_IMAGE",
+        placeholder: fieldMarker("HERO_IMAGE"),
       },
       {
         role: "HEADLINE",
@@ -120,7 +126,7 @@ function flyerStandardLight(): CreativeShellSpec {
         maxLines: 3,
         autofill: true,
         locked: false,
-        placeholder: "HEADLINE",
+        placeholder: fieldMarker("HEADLINE"),
       },
       {
         role: "DESCRIPTION",
@@ -132,7 +138,7 @@ function flyerStandardLight(): CreativeShellSpec {
         maxLines: 6,
         autofill: true,
         locked: false,
-        placeholder: "DESCRIPTION",
+        placeholder: fieldMarker("DESCRIPTION"),
       },
       {
         role: "DATE",
@@ -144,7 +150,7 @@ function flyerStandardLight(): CreativeShellSpec {
         maxLines: 1,
         autofill: true,
         locked: false,
-        placeholder: "DATE",
+        placeholder: fieldMarker("DATE"),
       },
       {
         role: "TIME",
@@ -156,7 +162,7 @@ function flyerStandardLight(): CreativeShellSpec {
         maxLines: 1,
         autofill: true,
         locked: false,
-        placeholder: "TIME",
+        placeholder: fieldMarker("TIME"),
       },
       {
         role: "LOCATION",
@@ -168,7 +174,7 @@ function flyerStandardLight(): CreativeShellSpec {
         maxLines: 2,
         autofill: true,
         locked: false,
-        placeholder: "LOCATION",
+        placeholder: fieldMarker("LOCATION"),
       },
       {
         role: "AUDIENCE",
@@ -180,7 +186,7 @@ function flyerStandardLight(): CreativeShellSpec {
         maxLines: 1,
         autofill: true,
         locked: false,
-        placeholder: "AUDIENCE",
+        placeholder: fieldMarker("AUDIENCE"),
       },
       {
         role: "CTA",
@@ -192,7 +198,7 @@ function flyerStandardLight(): CreativeShellSpec {
         maxLines: 1,
         autofill: true,
         locked: false,
-        placeholder: "CTA",
+        placeholder: fieldMarker("CTA"),
       },
       {
         role: "CONTACT_EMAIL",
@@ -204,14 +210,14 @@ function flyerStandardLight(): CreativeShellSpec {
         maxLines: 1,
         autofill: true,
         locked: false,
-        placeholder: "CONTACT_EMAIL",
+        placeholder: fieldMarker("CONTACT_EMAIL"),
       },
       {
         role: "QR_CODE",
         ...qrZone,
         autofill: true,
         locked: false,
-        placeholder: "QR_CODE",
+        placeholder: fieldMarker("QR_CODE"),
       },
       {
         role: "BRAND_BAR",
@@ -231,7 +237,7 @@ function flyerStandardLight(): CreativeShellSpec {
         height: 0.5,
         autofill: false,
         locked: true,
-        placeholder: "SJJCC",
+        placeholder: fieldMarker("SJJCC_LOGO_LOCKUP"),
       },
       {
         role: "UJA_LOGO_ZONE",
@@ -241,7 +247,7 @@ function flyerStandardLight(): CreativeShellSpec {
         height: 0.5,
         autofill: false,
         locked: true,
-        placeholder: "UJA",
+        placeholder: fieldMarker("UJA_LOGO"),
       },
     ],
   };
@@ -293,7 +299,7 @@ function halfPageStandardLight(): CreativeShellSpec {
         height: 1.8,
         autofill: true,
         locked: false,
-        placeholder: "HERO_IMAGE",
+        placeholder: fieldMarker("HERO_IMAGE"),
       },
       {
         role: "HEADLINE",
@@ -305,7 +311,7 @@ function halfPageStandardLight(): CreativeShellSpec {
         maxLines: 3,
         autofill: true,
         locked: false,
-        placeholder: "HEADLINE",
+        placeholder: fieldMarker("HEADLINE"),
       },
       {
         role: "DESCRIPTION",
@@ -317,7 +323,7 @@ function halfPageStandardLight(): CreativeShellSpec {
         maxLines: 5,
         autofill: true,
         locked: false,
-        placeholder: "DESCRIPTION",
+        placeholder: fieldMarker("DESCRIPTION"),
       },
       {
         role: "DATE",
@@ -329,7 +335,7 @@ function halfPageStandardLight(): CreativeShellSpec {
         maxLines: 1,
         autofill: true,
         locked: false,
-        placeholder: "DATE",
+        placeholder: fieldMarker("DATE"),
       },
       {
         role: "TIME",
@@ -341,7 +347,7 @@ function halfPageStandardLight(): CreativeShellSpec {
         maxLines: 1,
         autofill: true,
         locked: false,
-        placeholder: "TIME",
+        placeholder: fieldMarker("TIME"),
       },
       {
         role: "LOCATION",
@@ -353,7 +359,7 @@ function halfPageStandardLight(): CreativeShellSpec {
         maxLines: 2,
         autofill: true,
         locked: false,
-        placeholder: "LOCATION",
+        placeholder: fieldMarker("LOCATION"),
       },
       {
         role: "CTA",
@@ -365,7 +371,7 @@ function halfPageStandardLight(): CreativeShellSpec {
         maxLines: 1,
         autofill: true,
         locked: false,
-        placeholder: "CTA",
+        placeholder: fieldMarker("CTA"),
       },
       {
         role: "CONTACT_EMAIL",
@@ -377,14 +383,14 @@ function halfPageStandardLight(): CreativeShellSpec {
         maxLines: 1,
         autofill: true,
         locked: false,
-        placeholder: "CONTACT_EMAIL",
+        placeholder: fieldMarker("CONTACT_EMAIL"),
       },
       {
         role: "QR_CODE",
         ...qrZone,
         autofill: true,
         locked: false,
-        placeholder: "QR_CODE",
+        placeholder: fieldMarker("QR_CODE"),
       },
       {
         role: "BRAND_BAR",
@@ -404,7 +410,7 @@ function halfPageStandardLight(): CreativeShellSpec {
         height: 0.45,
         autofill: false,
         locked: true,
-        placeholder: "SJJCC",
+        placeholder: fieldMarker("SJJCC_LOGO_LOCKUP"),
       },
       {
         role: "UJA_LOGO_ZONE",
@@ -414,7 +420,7 @@ function halfPageStandardLight(): CreativeShellSpec {
         height: 0.45,
         autofill: false,
         locked: true,
-        placeholder: "UJA",
+        placeholder: fieldMarker("UJA_LOGO"),
       },
     ],
   };
@@ -467,7 +473,7 @@ function socialPortraitStandardLight(): CreativeShellSpec {
         height: 420,
         autofill: true,
         locked: false,
-        placeholder: "HERO_IMAGE",
+        placeholder: fieldMarker("HERO_IMAGE"),
       },
       {
         role: "HEADLINE",
@@ -479,7 +485,7 @@ function socialPortraitStandardLight(): CreativeShellSpec {
         maxLines: 3,
         autofill: true,
         locked: false,
-        placeholder: "HEADLINE",
+        placeholder: fieldMarker("HEADLINE"),
       },
       {
         role: "DESCRIPTION",
@@ -491,7 +497,7 @@ function socialPortraitStandardLight(): CreativeShellSpec {
         maxLines: 4,
         autofill: true,
         locked: false,
-        placeholder: "DESCRIPTION",
+        placeholder: fieldMarker("DESCRIPTION"),
       },
       {
         role: "DATE",
@@ -503,7 +509,7 @@ function socialPortraitStandardLight(): CreativeShellSpec {
         maxLines: 1,
         autofill: true,
         locked: false,
-        placeholder: "DATE",
+        placeholder: fieldMarker("DATE"),
       },
       {
         role: "TIME",
@@ -515,7 +521,7 @@ function socialPortraitStandardLight(): CreativeShellSpec {
         maxLines: 1,
         autofill: true,
         locked: false,
-        placeholder: "TIME",
+        placeholder: fieldMarker("TIME"),
       },
       {
         role: "LOCATION",
@@ -527,7 +533,7 @@ function socialPortraitStandardLight(): CreativeShellSpec {
         maxLines: 1,
         autofill: true,
         locked: false,
-        placeholder: "LOCATION",
+        placeholder: fieldMarker("LOCATION"),
       },
       {
         role: "CTA",
@@ -539,14 +545,14 @@ function socialPortraitStandardLight(): CreativeShellSpec {
         maxLines: 1,
         autofill: true,
         locked: false,
-        placeholder: "CTA",
+        placeholder: fieldMarker("CTA"),
       },
       {
         role: "QR_CODE",
         ...qrZone,
         autofill: true,
         locked: false,
-        placeholder: "QR_CODE",
+        placeholder: fieldMarker("QR_CODE"),
       },
       {
         role: "BRAND_BAR",
@@ -566,7 +572,7 @@ function socialPortraitStandardLight(): CreativeShellSpec {
         height: 62,
         autofill: false,
         locked: true,
-        placeholder: "SJJCC",
+        placeholder: fieldMarker("SJJCC_LOGO_LOCKUP"),
       },
       {
         role: "UJA_LOGO_ZONE",
@@ -576,7 +582,7 @@ function socialPortraitStandardLight(): CreativeShellSpec {
         height: 62,
         autofill: false,
         locked: true,
-        placeholder: "UJA",
+        placeholder: fieldMarker("UJA_LOGO"),
       },
     ],
   };

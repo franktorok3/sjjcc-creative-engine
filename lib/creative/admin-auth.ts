@@ -2,13 +2,26 @@ import "server-only";
 
 /**
  * Admin/operator routes (shell generation, etc.).
- * Uses CREATIVE_ENGINE_ADMIN_SECRET — does not alter Google Form webhook secret.
+ *
+ * Resolution order for X-Admin-Secret:
+ * 1. CREATIVE_ENGINE_ADMIN_SECRET (if configured)
+ * 2. otherwise GOOGLE_FORM_WEBHOOK_SECRET
+ *
+ * Does not change Google Form webhook behavior or expose secret values.
  */
+export function resolveAdminSecret(): string | null {
+  return (
+    process.env.CREATIVE_ENGINE_ADMIN_SECRET?.trim() ||
+    process.env.GOOGLE_FORM_WEBHOOK_SECRET?.trim() ||
+    null
+  );
+}
+
 export function assertAdminSecret(request: Request): void {
-  const expected = process.env.CREATIVE_ENGINE_ADMIN_SECRET?.trim();
+  const expected = resolveAdminSecret();
   if (!expected) {
     const error = new Error(
-      "CREATIVE_ENGINE_ADMIN_SECRET is not configured. Shell generation is disabled until an operator sets this env var.",
+      "Admin secret is not configured. Set CREATIVE_ENGINE_ADMIN_SECRET or GOOGLE_FORM_WEBHOOK_SECRET.",
     );
     (error as Error & { code: string }).code = "ADMIN_SECRET_MISSING";
     throw error;

@@ -36,7 +36,8 @@ function fontSizeFor(spec: CreativeShellSpec, zone: ShellContentZone): number {
 
 /**
  * Build a structured PPTX shell from a CreativeShellSpec.
- * Text remains real text (not rasterized). Logos are reserved zones — not generated marks.
+ * Visible [[FIELD]] markers guide one-time Data Autofill binding.
+ * Logo zones use [[SJJCC_LOGO_LOCKUP]] / [[UJA_LOGO]] — not generated logos.
  */
 export async function buildShellPptx(
   spec: CreativeShellSpec,
@@ -79,24 +80,24 @@ export async function buildShellPptx(
     }
 
     if (zone.role === "SJJCC_LOGO_ZONE" || zone.role === "UJA_LOGO_ZONE") {
-      // Reserved logo frame — not a generated logo. Operator replaces with Brand Kit asset.
       slide.addShape(pptx.ShapeType.roundRect, {
         x,
         y,
         w: zw,
         h: zh,
-        fill: { color: "FFFFFF", transparency: 70 },
+        fill: { color: "FFFFFF", transparency: 55 },
         line: { color: SHELL_ACCENT_COLOR.replace("#", ""), width: 1.5 },
       });
-      slide.addText(`LOGO ZONE · ${zone.placeholder} (Brand Kit)`, {
+      slide.addText(zone.placeholder, {
         x,
         y,
         w: zw,
         h: zh,
-        fontSize: 8,
+        fontSize: 9,
         color: "FFFFFF",
         align: "center",
         valign: "middle",
+        bold: true,
         fontFace: "Arial",
       });
       continue;
@@ -111,7 +112,7 @@ export async function buildShellPptx(
         fill: { color: "FFFFFF" },
         line: { color: SJJCC_BRAND_COLORS.gray.replace("#", ""), width: 1.25 },
       });
-      slide.addText("QR_CODE", {
+      slide.addText(zone.placeholder, {
         x,
         y,
         w: zw,
@@ -135,7 +136,7 @@ export async function buildShellPptx(
         fill: { color: "E8F4F8" },
         line: { color: SHELL_ACCENT_COLOR.replace("#", ""), width: 1 },
       });
-      slide.addText("HERO_IMAGE", {
+      slide.addText(zone.placeholder, {
         x,
         y,
         w: zw,
@@ -144,6 +145,7 @@ export async function buildShellPptx(
         color: SJJCC_BRAND_COLORS.gray.replace("#", ""),
         align: "center",
         valign: "middle",
+        bold: true,
         fontFace: "Arial",
       });
       continue;
@@ -173,7 +175,6 @@ export async function buildShellPptx(
       continue;
     }
 
-    // Labeled autofill text zones — editable text in Canva after PPTX import
     slide.addText(zone.placeholder, {
       x,
       y,

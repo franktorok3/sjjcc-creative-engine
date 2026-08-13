@@ -43,11 +43,13 @@ export async function importDesignFromBytes(input: {
   mimeType: string;
 }): Promise<{
   jobId: string;
+  importJobStatus: "success";
   designId: string;
   title: string;
   editUrl: string | null;
   viewUrl: string | null;
   thumbnailUrl: string | null;
+  editableImportConfirmed: boolean;
 }> {
   const title = input.title.trim().slice(0, 50) || "Creative Engine Shell";
   const titleBase64 = Buffer.from(title, "utf8").toString("base64");
@@ -107,11 +109,13 @@ export async function importDesignFromBytes(input: {
 
   return {
     jobId,
+    importJobStatus: "success" as const,
     designId: design.id,
     title: design.title ?? title,
     editUrl: design.urls?.edit_url ?? null,
     viewUrl: design.urls?.view_url ?? null,
     thumbnailUrl: design.thumbnail?.url ?? null,
+    editableImportConfirmed: Boolean(design.urls?.edit_url || design.id),
   };
 }
 

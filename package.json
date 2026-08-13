@@ -9,7 +9,8 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "export:shells": "tsx scripts/export-shell-pptx.ts"
   },
   "dependencies": {
     "next": "16.2.12",

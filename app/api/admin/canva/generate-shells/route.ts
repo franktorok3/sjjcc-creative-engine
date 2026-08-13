@@ -13,7 +13,8 @@ export const maxDuration = 120;
 
 /**
  * Operator-only: generate CE shell family via PPTX → Canva import.
- * Header: X-Admin-Secret: $CREATIVE_ENGINE_ADMIN_SECRET
+ * Header: X-Admin-Secret
+ * Resolves CREATIVE_ENGINE_ADMIN_SECRET, else GOOGLE_FORM_WEBHOOK_SECRET.
  *
  * Body (optional JSON):
  *   { "keys": ["flyer_standard_light"], "attemptPublish": true, "persistCandidates": true }
@@ -59,6 +60,7 @@ export async function POST(request: Request) {
         await persistCandidateRegistry(
           report.shells.map((s) => s.registryCandidate),
         );
+        await persistGenerationResults(report.shells.map(sanitizeShell));
       } catch {
         // Vercel FS is ephemeral/read-only — response still contains candidates.
       }
@@ -137,11 +139,17 @@ function sanitizeShell(shell: Awaited<
     designEditUrl: shell.designEditUrl,
     designViewUrl: shell.designViewUrl,
     thumbnailUrl: shell.thumbnailUrl,
+    importJobId: shell.importJobId,
+    importJobStatus: shell.importJobStatus,
+    editableImportConfirmed: shell.editableImportConfirmed,
     brandTemplateId: shell.brandTemplateId,
     brandTemplateViewUrl: shell.brandTemplateViewUrl,
     publishAttempted: shell.publishAttempted,
     publishSucceeded: shell.publishSucceeded,
     publishError: shell.publishError,
+    manualPublishRequired: shell.manualPublishRequired,
+    AutofillBindingRequired: shell.AutofillBindingRequired,
+    logoReplacementRequired: shell.logoReplacementRequired,
     autofillFieldsCreated: shell.autofillFieldsCreated,
     autofillStatus: shell.autofillStatus,
     liveDatasetFieldCount: shell.liveDatasetFieldCount,
@@ -150,6 +158,7 @@ function sanitizeShell(shell: Awaited<
     lockedBrandElements: shell.lockedBrandElements,
     validation: shell.validation,
     missingLogoAssetEnv: shell.missingLogoAssetEnv,
+    finishingChecklist: shell.finishingChecklist,
     manualStepsRemaining: shell.manualStepsRemaining,
     registryCandidate: shell.registryCandidate,
   };
@@ -184,6 +193,23 @@ async function persistCandidateRegistry(
         generatedAt: new Date().toISOString(),
         note: "Candidates only — approved=false. Copy verified entries into config/canva-templates.ts after dataset inspection.",
         candidates,
+      },
+      null,
+      2,
+    ),
+    "utf8",
+  );
+}
+
+async function persistGenerationResults(shells: unknown[]): Promise<void> {
+  const dir = path.join(process.cwd(), "config");
+  await mkdir(dir, { recursive: true });
+  await writeFile(
+    path.join(dir, "canva-shell-generation.latest.json"),
+    JSON.stringify(
+      {
+        generatedAt: new Date().toISOString(),
+        shells,
       },
       null,
       2,
