@@ -46,3 +46,7 @@ next-env.d.ts
 *.enc
 canva-tokens*
 basecamp-tokens*
+
+# Generated shell candidate IDs (may contain live Canva IDs)
+config/canva-template-candidates.generated.json
+

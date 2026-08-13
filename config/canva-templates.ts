@@ -119,6 +119,11 @@ export const ASSET_TYPE_META: Record<
 /**
  * Approved Creative Engine templates.
  * Empty until Phase 2 registers verified Autofill Brand Templates.
+ *
+ * Structural candidates (approved=false) live in:
+ *   config/canva-template-candidates.ts
+ * Live generation writes IDs into the API response (and optionally
+ * config/canva-template-candidates.generated.json in local/dev).
  */
 export const APPROVED_CREATIVE_TEMPLATES: CreativeTemplate[] = [];
 
