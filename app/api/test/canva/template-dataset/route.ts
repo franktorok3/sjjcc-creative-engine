@@ -12,12 +12,25 @@ import { validateBrandTemplateStructure } from "@/lib/canva/brand-validation";
 export const runtime = "nodejs";
 
 /**
- * TEST 3 — Retrieve the configured Brand Template dataset field names/types.
- * Use this before editing config/form-to-canva.ts.
+ * Retrieve a Brand Template autofill dataset (field names/types).
+ * Optional ?brandTemplateId=<id> inspects a candidate without requiring
+ * CANVA_BRAND_TEMPLATE_ID. Does not select or write env vars.
  */
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    const brandTemplateId = getConfiguredBrandTemplateId();
+    const url = new URL(request.url);
+    const queryId = url.searchParams.get("brandTemplateId")?.trim();
+
+    let brandTemplateId: string;
+    let idSource: "query" | "env";
+    if (queryId) {
+      brandTemplateId = queryId;
+      idSource = "query";
+    } else {
+      brandTemplateId = getConfiguredBrandTemplateId();
+      idSource = "env";
+    }
+
     const dataset = await getBrandTemplateDataset(brandTemplateId);
     const datasetFields = Object.entries(dataset).map(([name, field]) => ({
       name,
@@ -33,6 +46,8 @@ export async function GET() {
       success: true,
       brandKitRequired: CANVA_BRAND_KIT_NAME,
       brandTemplateId,
+      idSource,
+      note: "Inspection only — this response does not set CANVA_BRAND_TEMPLATE_ID.",
       dataset,
       datasetFields,
       currentMapping: FORM_TO_CANVA_FIELD_MAP,
