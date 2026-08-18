@@ -3,6 +3,8 @@ import { CreativePortalForm } from "@/components/CreativePortalForm";
 import { TestModeBanner } from "@/components/TestModeBanner";
 import { isCreativeEngineTestMode } from "@/lib/creative/test-mode";
 
+export const dynamic = "force-dynamic";
+
 const display = Fraunces({
   subsets: ["latin"],
   variable: "--font-portal-display",
