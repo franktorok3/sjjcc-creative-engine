@@ -9,6 +9,8 @@ import {
   setIdempotentResult,
 } from "@/lib/creative/idempotency";
 import { createRequestId, logFailed } from "@/lib/creative/logging";
+import { isCreativeEngineTestMode } from "@/lib/creative/test-mode";
+import { logCreativeStage } from "@/lib/creative/workflow-stage-log";
 import { workflowErrorResponse } from "@/lib/creative/workflow-http";
 import {
   runFormToCanvaToBasecampWorkflow,
@@ -20,8 +22,8 @@ export const maxDuration = 60;
 
 /**
  * Native Creative Engine Portal intake.
- * Normalizes into the same workflow payload as Google Form → /api/form-submit.
- * No webhook secret (browser form); Google Form path stays unchanged.
+ * During test mode this is the only path that may run Canva/Basecamp.
+ * Google Form path stays at /api/form-submit (processing disabled by default).
  */
 export async function POST(request: Request) {
   const requestId = createRequestId();
@@ -41,6 +43,24 @@ export async function POST(request: Request) {
         { status: 400 },
       );
     }
+
+    if (parsed.data.source !== "creative_engine_portal") {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "INVALID_SOURCE",
+          message: "Only creative_engine_portal is accepted on this route.",
+          requestId,
+        },
+        { status: 400 },
+      );
+    }
+
+    logCreativeStage("request_validated", {
+      requestId,
+      source: "creative_engine_portal",
+      testMode: isCreativeEngineTestMode(),
+    });
 
     const payload = portalRequestToWorkflowPayload(parsed.data);
     const idempotencyKey = buildIdempotencyKey({

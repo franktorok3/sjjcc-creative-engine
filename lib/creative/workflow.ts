@@ -21,6 +21,7 @@ import {
   googleFormToCreativeRequest,
 } from "@/lib/creative/creative-request";
 import {
+  CreativeEngineError,
   DatasetMismatchError,
   NoApprovedTemplateError,
 } from "@/lib/creative/errors";
@@ -34,8 +35,14 @@ import {
   selectCreativeTemplate,
   validateTemplateDataset,
 } from "@/lib/creative/select-template";
+import {
+  isBasecampPostingEnabled,
+  isCreativeEngineTestMode,
+  isGoogleFormProcessingEnabled,
+} from "@/lib/creative/test-mode";
 import type { CreativeRequest } from "@/lib/creative/types";
 import { ASSET_TYPE_LABELS } from "@/lib/creative/types";
+import { logCreativeStage } from "@/lib/creative/workflow-stage-log";
 
 /** @deprecated Prefer CreativeWorkflowPayload — kept for Google Form callers. */
 export type FormSubmitPayload = Extract<
@@ -48,8 +55,11 @@ export type WorkflowSuccess = {
   requestId: string;
   canvaDesignId: string;
   canvaDesignUrl: string;
-  basecampMessageId: string;
-  basecampMessageUrl: string;
+  basecampMessageId: string | null;
+  basecampMessageUrl: string | null;
+  basecampPosting: "posted" | "disabled" | "skipped";
+  testMode: boolean;
+  contentDensity?: string;
   qrAssetId?: string;
   templateTitle?: string;
   assetType?: string;
@@ -76,11 +86,37 @@ export async function runFormToCanvaToBasecampWorkflow(
   requestId: string,
 ): Promise<WorkflowSuccess> {
   try {
+    // Test mode: only native portal may enter the full Canva/Basecamp path.
+    if (
+      payload.source === "google_form" &&
+      !isGoogleFormProcessingEnabled()
+    ) {
+      logCreativeStage("google_form_processing_disabled", { requestId });
+      throw new CreativeEngineError(
+        "GOOGLE_FORM_PROCESSING_DISABLED",
+        "Google Form processing is currently disabled while the Creative Engine is in test mode.",
+      );
+    }
+
+    if (
+      isCreativeEngineTestMode() &&
+      payload.source !== "creative_engine_portal"
+    ) {
+      throw new CreativeEngineError(
+        "TEST_MODE_PORTAL_ONLY",
+        "Only creative_engine_portal requests may run the Creative Engine workflow during test mode.",
+      );
+    }
+
     logMilestone(
       requestId,
       "FORM_RECEIVED",
       `source=${payload.source}`,
     );
+    logCreativeStage("request_validated", {
+      requestId,
+      source: payload.source,
+    });
 
     const request = resolveCreativeRequest(payload);
     const classification = classifyCreativeRequest(request);
@@ -90,6 +126,12 @@ export async function runFormToCanvaToBasecampWorkflow(
       "CLASSIFIED",
       `asset=${request.assetType} density=${classification.density} contact=${classification.contactTreatment} image=${request.imageTreatment} qr=${classification.requiresQr}`,
     );
+    logCreativeStage("request_classified", {
+      requestId,
+      assetType: request.assetType,
+      density: classification.density,
+      requiresQr: classification.requiresQr,
+    });
 
     const selection = selectCreativeTemplate(request, classification);
     if (!selection.ok) {
@@ -119,6 +161,11 @@ export async function runFormToCanvaToBasecampWorkflow(
       "TEMPLATE_SELECTED",
       `title=${template.title} id=${template.id}`,
     );
+    logCreativeStage("template_selected", {
+      requestId,
+      templateTitle: template.title,
+      templateId: template.id,
+    });
 
     const dataset = await getBrandTemplateDataset(template.id);
     const liveTypes: Record<string, string> = {};
@@ -143,6 +190,11 @@ export async function runFormToCanvaToBasecampWorkflow(
         datasetCheck,
       );
     }
+    logCreativeStage("dataset_validated", {
+      requestId,
+      templateId: template.id,
+      fieldCount: Object.keys(liveTypes).length,
+    });
 
     // Soft structure check for QR role when template claims QR support
     if (template.supportsQr) {
@@ -198,11 +250,19 @@ export async function runFormToCanvaToBasecampWorkflow(
           "CANVA_QR_ATTACHED",
           `assetId=${withQr.qrAssetId}`,
         );
+        logCreativeStage("qr_generated", {
+          requestId,
+          attached: true,
+        });
       }
     }
 
     assertNoBrandOverwriteFromUser(data);
 
+    logCreativeStage("canva_autofill_started", {
+      requestId,
+      templateId: template.id,
+    });
     const design = await autofillBrandTemplate({
       brandTemplateId: template.id,
       title: promotionName,
@@ -217,45 +277,70 @@ export async function runFormToCanvaToBasecampWorkflow(
       "CANVA_AUTOFILL_COMPLETE",
       `designId=${design.designId}`,
     );
-
-    logMilestone(requestId, "BASECAMP_POST_STARTED");
-    const html = buildCreativeDraftHtml({
-      promotionName,
-      submittedAt: payload.submittedAt,
-      fields: {
-        "Asset Type": ASSET_TYPE_LABELS[request.assetType],
-        ...(request.department ? { Department: request.department } : {}),
-        Source:
-          request.source === "creative_engine_portal"
-            ? "Creative Engine Portal"
-            : "Google Form",
-        ...(request.registrationUrl
-          ? { "Registration URL": request.registrationUrl }
-          : {}),
-        Summary: [
-          classification.density,
-          request.imageTreatment,
-          classification.contactTreatment,
-        ].join(" · "),
-      },
-      canvaDesignUrl: design.designUrl,
-      status: "Canva draft generated (approved Creative Engine layout)",
-    });
-
-    const message = await createMessageBoardMessage({
-      subject: `Creative Draft: ${promotionName}`,
-      content: html,
-      status: "active",
-    });
-
-    const messageId = String(message.id);
-    const messageUrl = message.app_url || message.url || "";
-
-    logMilestone(
+    logCreativeStage("canva_autofill_complete", {
       requestId,
-      "BASECAMP_POST_COMPLETE",
-      `messageId=${messageId}`,
-    );
+      designId: design.designId,
+    });
+
+    // Basecamp only after Canva success — never on Canva/QR/dataset failure.
+    let basecampMessageId: string | null = null;
+    let basecampMessageUrl: string | null = null;
+    let basecampPosting: WorkflowSuccess["basecampPosting"] = "skipped";
+
+    if (!isBasecampPostingEnabled()) {
+      logCreativeStage("basecamp_posting_skipped", {
+        requestId,
+        reason: "CREATIVE_ENGINE_BASECAMP_POSTING_ENABLED=false",
+      });
+      basecampPosting = "disabled";
+    } else {
+      logMilestone(requestId, "BASECAMP_POST_STARTED");
+      logCreativeStage("basecamp_post_started", { requestId });
+      const html = buildCreativeDraftHtml({
+        promotionName,
+        submittedAt: payload.submittedAt,
+        fields: {
+          "Asset Type": ASSET_TYPE_LABELS[request.assetType],
+          ...(request.department ? { Department: request.department } : {}),
+          Source:
+            request.source === "creative_engine_portal"
+              ? "Creative Engine Portal"
+              : "Google Form",
+          ...(request.registrationUrl
+            ? { "Registration URL": request.registrationUrl }
+            : {}),
+          Summary: [
+            classification.density,
+            request.imageTreatment,
+            classification.contactTreatment,
+          ].join(" · "),
+          ...(isCreativeEngineTestMode() ? { Mode: "TEST MODE" } : {}),
+        },
+        canvaDesignUrl: design.designUrl,
+        status: "Canva draft generated (approved Creative Engine layout)",
+      });
+
+      const message = await createMessageBoardMessage({
+        subject: `Creative Draft: ${promotionName}`,
+        content: html,
+        status: "active",
+      });
+
+      basecampMessageId = String(message.id);
+      basecampMessageUrl = message.app_url || message.url || "";
+      basecampPosting = "posted";
+
+      logMilestone(
+        requestId,
+        "BASECAMP_POST_COMPLETE",
+        `messageId=${basecampMessageId}`,
+      );
+      logCreativeStage("basecamp_post_complete", {
+        requestId,
+        messageId: basecampMessageId,
+      });
+    }
+
     logMilestone(requestId, "WORKFLOW_COMPLETE");
 
     return {
@@ -263,8 +348,11 @@ export async function runFormToCanvaToBasecampWorkflow(
       requestId,
       canvaDesignId: design.designId,
       canvaDesignUrl: design.designUrl,
-      basecampMessageId: messageId,
-      basecampMessageUrl: messageUrl,
+      basecampMessageId,
+      basecampMessageUrl,
+      basecampPosting,
+      testMode: isCreativeEngineTestMode(),
+      contentDensity: classification.density,
       ...(qrAssetId ? { qrAssetId } : {}),
       templateTitle: template.title,
       assetType: request.assetType,
@@ -279,6 +367,14 @@ export async function runFormToCanvaToBasecampWorkflow(
     const stage = inferStage(error);
     const reason = error instanceof Error ? error.message : "Unknown error";
     logFailed(requestId, stage, reason);
+    logCreativeStage("workflow_failed", {
+      requestId,
+      stage,
+      code:
+        error && typeof error === "object" && "code" in error
+          ? String((error as { code: string }).code)
+          : undefined,
+    });
     throw error;
   }
 }

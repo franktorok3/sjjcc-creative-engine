@@ -1,13 +1,18 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { assertWebhookConfigured } from "@/lib/creative/env";
 import { googleFormToWorkflowPayload } from "@/lib/creative/creative-request";
+import { assertWebhookConfigured } from "@/lib/creative/env";
 import {
   buildIdempotencyKey,
   getIdempotentResult,
   setIdempotentResult,
 } from "@/lib/creative/idempotency";
 import { createRequestId, logFailed } from "@/lib/creative/logging";
+import {
+  GOOGLE_FORM_PROCESSING_DISABLED_RESPONSE,
+  isGoogleFormProcessingEnabled,
+} from "@/lib/creative/test-mode";
+import { logCreativeStage } from "@/lib/creative/workflow-stage-log";
 import { workflowErrorResponse } from "@/lib/creative/workflow-http";
 import {
   runFormToCanvaToBasecampWorkflow,
@@ -33,8 +38,10 @@ function timingSafeEqual(a: string, b: string): boolean {
 }
 
 /**
- * Google Form webhook intake (unchanged contract).
- * Normalizes into the shared Creative Engine workflow.
+ * Google Form webhook (Apps Script).
+ * Remains compatible: validates secret + payload shape.
+ * While CREATIVE_ENGINE_GOOGLE_FORM_PROCESSING_ENABLED is false (default),
+ * returns success without Canva/Basecamp work.
  */
 export async function POST(request: Request) {
   const requestId = createRequestId();
@@ -63,6 +70,19 @@ export async function POST(request: Request) {
         },
         { status: 400 },
       );
+    }
+
+    logCreativeStage("request_validated", {
+      requestId,
+      source: "google_form",
+    });
+
+    if (!isGoogleFormProcessingEnabled()) {
+      logCreativeStage("google_form_processing_disabled", { requestId });
+      return NextResponse.json({
+        ...GOOGLE_FORM_PROCESSING_DISABLED_RESPONSE,
+        requestId,
+      });
     }
 
     const payload = googleFormToWorkflowPayload(parsed.data);
