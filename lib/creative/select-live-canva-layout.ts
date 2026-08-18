@@ -22,7 +22,16 @@ export type LiveCanvaLayout = {
   id: string;
   title: string;
   dataset: CanvaBrandTemplateDataset;
-  selectionMode: "approved_registry" | "shell_brand_template" | "live_discovery";
+  /**
+   * autofill = Brand Template has Data Autofill fields (true agentic fill)
+   * visual_copy = Brand Template exists but dataset empty (open editable copy)
+   */
+  fillMode: "autofill" | "visual_copy";
+  selectionMode:
+    | "approved_registry"
+    | "shell_brand_template"
+    | "live_discovery"
+    | "agentic_fallback";
   matchedAssetType: AssetType;
   shellKey: string;
   shellTitle: string;
@@ -49,11 +58,20 @@ export function selectShellSpecForRequest(
 
 const CORE_TEXT_HINTS = ["headline", "title", "description", "body", "date"];
 
+type ScoredTemplate = {
+  id: string;
+  title: string;
+  dataset: CanvaBrandTemplateDataset;
+  score: number;
+  fillMode: "autofill" | "visual_copy";
+};
+
 /**
- * Resolve a live Canva Brand Template that implements the selected shell.
+ * Agentic flyer/handout/social path:
+ * form asset → CE shell → live Canva Brand Template → Autofill when possible.
  *
- * Path: form asset type → CE shell shape → Canva Brand Template with Autofill.
- * Never uses PPTX. Never invents template IDs.
+ * Never PPTX. Never invents template IDs.
+ * Falls back to any Autofill-ready Brand Template, then visual Brand Template copy.
  */
 export async function selectLiveCanvaLayout(input: {
   request: CreativeRequest;
@@ -70,24 +88,16 @@ export async function selectLiveCanvaLayout(input: {
     assetType: request.assetType,
   });
 
-  const listed = await listAllBrandTemplates({
-    dataset: "non_empty",
-    limit: 100,
-    maxPages: 10,
-  });
+  // Prefer Autofill-ready templates; also list visual ones for copy fallback.
+  const [autofillListed, anyListed] = await Promise.all([
+    listAllBrandTemplates({ dataset: "non_empty", limit: 100, maxPages: 10 }),
+    listAllBrandTemplates({ dataset: "any", limit: 100, maxPages: 10 }),
+  ]);
 
-  const scored: Array<{
-    id: string;
-    title: string;
-    dataset: CanvaBrandTemplateDataset;
-    score: number;
-  }> = [];
-
-  for (const template of listed.items) {
+  const autofillScored: ScoredTemplate[] = [];
+  for (const template of autofillListed.items) {
     const title = (template.title ?? "").trim();
-    if (!title) continue;
-    if (isDisallowedTitle(title)) continue;
-
+    if (!title || isDisallowedTitle(title)) continue;
     let dataset: CanvaBrandTemplateDataset;
     try {
       dataset = await getBrandTemplateDataset(template.id);
@@ -95,89 +105,137 @@ export async function selectLiveCanvaLayout(input: {
       continue;
     }
     if (!datasetLooksUsable(dataset)) continue;
-
-    const score = scoreTemplateForShell(title, shell, dataset);
-    if (score <= 0) continue;
-
-    scored.push({
+    const score = scoreTemplateForShell(title, shell, dataset, true);
+    autofillScored.push({
       id: String(template.id),
       title,
       dataset,
       score,
+      fillMode: "autofill",
     });
   }
+  autofillScored.sort((a, b) => b.score - a.score);
 
-  scored.sort((a, b) => b.score - a.score);
-  const pick = scored[0];
+  // 1) Shell / family Autofill match
+  const familyAutofill = autofillScored.find((s) => s.score >= 20);
+  // 2) Any Autofill-ready template (true agentic fill with available Canva layout)
+  const anyAutofill = autofillScored[0];
 
-  if (!pick) {
-    throw new CreativeEngineError(
-      "NO_CANVA_LAYOUT",
-      [
-        `No Canva Brand Template was found for shell "${shell.title}".`,
-        "The portal builds the shell shape first, then Canva Autofill fills content.",
-        "Publish that shell as a Canva Brand Template with Autofill fields, then retry.",
-        "PPTX import is not used for portal generation.",
-      ].join(" "),
-      {
-        shellKey: shell.key,
-        shellTitle: shell.title,
-        assetType: request.assetType,
-        summary: {
-          asset: ASSET_TYPE_LABELS[request.assetType],
-          shell: shell.title,
-          requirement:
-            "Live Canva Brand Template matching this shell, with Autofill dataset",
-        },
-      },
-    );
+  const pick = familyAutofill ?? anyAutofill;
+  if (pick) {
+    const selectionMode =
+      pick.score >= 50
+        ? "shell_brand_template"
+        : pick.score >= 20
+          ? "live_discovery"
+          : "agentic_fallback";
+
+    logCreativeStage("template_selected", {
+      requestId,
+      mode: selectionMode,
+      fillMode: "autofill",
+      shellKey: shell.key,
+      templateId: pick.id,
+      templateTitle: pick.title,
+      score: pick.score,
+    });
+
+    return {
+      id: pick.id,
+      title: pick.title,
+      dataset: pick.dataset,
+      fillMode: "autofill",
+      selectionMode,
+      matchedAssetType: request.assetType,
+      shellKey: shell.key,
+      shellTitle: shell.title,
+    };
   }
 
-  const selectionMode =
-    pick.score >= 50 ? "shell_brand_template" : "live_discovery";
+  // 3) Visual Brand Template copy — real Canva layout, content not Autofilled yet
+  const visualScored: ScoredTemplate[] = [];
+  for (const template of anyListed.items) {
+    const title = (template.title ?? "").trim();
+    if (!title || isDisallowedTitle(title)) continue;
+    const score = scoreTemplateForShell(title, shell, {}, false);
+    visualScored.push({
+      id: String(template.id),
+      title,
+      dataset: {},
+      score,
+      fillMode: "visual_copy",
+    });
+  }
+  visualScored.sort((a, b) => b.score - a.score);
+  const visual =
+    visualScored.find((s) => s.score >= 15) ?? visualScored[0];
 
-  logCreativeStage("template_selected", {
-    requestId,
-    mode: selectionMode,
-    shellKey: shell.key,
-    templateId: pick.id,
-    templateTitle: pick.title,
-    score: pick.score,
-  });
+  if (visual) {
+    logCreativeStage("template_selected", {
+      requestId,
+      mode: "agentic_fallback",
+      fillMode: "visual_copy",
+      shellKey: shell.key,
+      templateId: visual.id,
+      templateTitle: visual.title,
+      score: visual.score,
+    });
 
-  return {
-    id: pick.id,
-    title: pick.title,
-    dataset: pick.dataset,
-    selectionMode,
-    matchedAssetType: request.assetType,
-    shellKey: shell.key,
-    shellTitle: shell.title,
-  };
+    return {
+      id: visual.id,
+      title: visual.title,
+      dataset: {},
+      fillMode: "visual_copy",
+      selectionMode: "agentic_fallback",
+      matchedAssetType: request.assetType,
+      shellKey: shell.key,
+      shellTitle: shell.title,
+    };
+  }
+
+  throw new CreativeEngineError(
+    "NO_CANVA_LAYOUT",
+    [
+      `No Canva Brand Template is available for agentic ${ASSET_TYPE_LABELS[request.assetType]} generation.`,
+      "Canva Connect can only Autofill an existing Brand Template (or open a Brand Template copy).",
+      "It cannot invent a designed flyer from a blank canvas, and PPTX is not used.",
+      `Create/publish a Brand Template for "${shell.title}", bind Data Autofill fields, reconnect Canva tokens, then retry.`,
+    ].join(" "),
+    {
+      shellKey: shell.key,
+      shellTitle: shell.title,
+      assetType: request.assetType,
+      summary: {
+        asset: ASSET_TYPE_LABELS[request.assetType],
+        shell: shell.title,
+        requirement:
+          "Live Canva Brand Template (Autofill preferred) + valid Canva access token",
+      },
+    },
+  );
 }
 
 function scoreTemplateForShell(
   title: string,
   shell: CreativeShellSpec,
   dataset: CanvaBrandTemplateDataset,
+  requireFamilySignal: boolean,
 ): number {
   const titleLower = title.toLowerCase();
   const shellTitleLower = shell.title.toLowerCase();
   let score = 0;
 
-  // Exact / near-exact CE shell title match (preferred)
   if (titleLower === shellTitleLower) score += 100;
   if (titleLower.includes(shellTitleLower)) score += 80;
   if (titleLower.includes(shell.key.replace(/_/g, " "))) score += 40;
 
-  // Asset-family hints
   if (shell.assetType === "flyer_full") {
-    if (titleLower.includes("flyer")) score += 20;
+    if (titleLower.includes("flyer")) score += 25;
     if (titleLower.includes("8.5")) score += 8;
   }
   if (shell.assetType === "handout_half") {
     if (titleLower.includes("half") || titleLower.includes("handout")) {
-      score += 20;
+      score += 25;
     }
     if (titleLower.includes("5.5")) score += 8;
   }
@@ -187,7 +245,7 @@ function scoreTemplateForShell(
       titleLower.includes("instagram") ||
       titleLower.includes("portrait")
     ) {
-      score += 20;
+      score += 25;
     }
     if (titleLower.includes("1080")) score += 8;
   }
@@ -196,16 +254,19 @@ function scoreTemplateForShell(
     score += 15;
   }
   if (titleLower.includes(CANVA_BRAND_KIT_QUERY.toLowerCase())) {
-    score += 5;
+    score += 8;
   }
 
-  // Require at least some asset hint or CE naming, otherwise skip generic kits
   const hasFamilySignal =
     score >= 20 ||
     titleLower.includes("ce -") ||
     titleLower.includes(shellTitleLower);
 
-  if (!hasFamilySignal) return 0;
+  if (requireFamilySignal && !hasFamilySignal) {
+    // Still allow weak score for agentic fallback ranking
+    score += Math.min(Object.keys(dataset).length, 12);
+    return score; // may be low; caller may still use as last resort
+  }
 
   score += Math.min(Object.keys(dataset).length, 12);
   return score;
