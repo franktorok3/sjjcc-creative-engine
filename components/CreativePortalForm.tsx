@@ -1,11 +1,11 @@
 "use client";
 
-import { useMemo, useState, type FormEvent, type ReactNode } from "react";
 import {
   ASSET_TYPE_META,
   ASSET_TYPE_OPTIONS,
   CTA_LABEL_OPTIONS,
 } from "@/config/creative-portal";
+import { CREATIVE_TEST_FIXTURE_LIST } from "@/config/creative-test-fixtures";
 import { APPROVED_CREATIVE_TEMPLATES } from "@/config/canva-templates";
 import { classifyCreativeRequest } from "@/lib/creative/classify";
 import { selectCreativeTemplate } from "@/lib/creative/select-template";
@@ -15,6 +15,7 @@ import {
   type ImageTreatment,
 } from "@/lib/creative/types";
 import type { AssetType } from "@/config/canva-templates";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 
 type FormState = {
   assetType: AssetType;
@@ -62,10 +63,14 @@ type BrandChecks = {
 type SuccessResult = {
   success: true;
   canvaDesignUrl: string;
-  basecampMessageUrl: string;
+  basecampMessageUrl: string | null;
   canvaDesignId?: string;
-  basecampMessageId?: string;
+  basecampMessageId?: string | null;
   templateTitle?: string;
+  assetType?: string;
+  contentDensity?: string;
+  basecampPosting?: "posted" | "disabled" | "skipped";
+  testMode?: boolean;
   brandChecks?: BrandChecks;
 };
 
@@ -217,13 +222,22 @@ const CONTACT_LABELS = {
   full: "Full",
 } as const;
 
-export function CreativePortalForm() {
+/** Client-side ceiling so the portal never spins indefinitely. */
+const SUBMIT_TIMEOUT_MS = 90_000;
+
+type PortalFormProps = {
+  testMode?: boolean;
+};
+
+export function CreativePortalForm({ testMode = false }: PortalFormProps) {
   const [form, setForm] = useState<FormState>(INITIAL);
   const [errors, setErrors] = useState<FieldErrors>({});
   const [submitting, setSubmitting] = useState(false);
+  const [submitPhase, setSubmitPhase] = useState<string | null>(null);
   const [result, setResult] = useState<SuccessResult | ErrorResult | null>(
     null,
   );
+  const abortRef = useRef<AbortController | null>(null);
 
   const preview = useMemo(() => {
     const request = toPreviewRequest(form);
@@ -252,6 +266,54 @@ export function CreativePortalForm() {
     });
   }
 
+  function loadFixture(fixtureId: string) {
+    const fixture = CREATIVE_TEST_FIXTURE_LIST.find((f) => f.id === fixtureId);
+    if (!fixture) return;
+    const r = fixture.request;
+    setResult(null);
+    setErrors({});
+    setForm({
+      ...INITIAL,
+      assetType: r.assetType,
+      intendedChannel: r.intendedChannel ?? "",
+      department: r.department ?? "",
+      programName: r.programName,
+      headline: r.headline ?? "",
+      description: r.description,
+      date: r.date ?? "",
+      startTime: r.startTime ?? "",
+      endTime: r.endTime ?? "",
+      location: r.location ?? "",
+      audience: r.audience ?? "",
+      additionalDetails: r.additionalDetails ?? "",
+      registrationDeadline: r.registrationDeadline ?? "",
+      requiresRegistration: r.requiresRegistration,
+      registrationUrl: r.registrationUrl ?? "",
+      ctaLabel: r.ctaLabel ?? "Register",
+      includeQr: r.includeQr,
+      showPricing: r.showPricing,
+      price: r.price ?? "",
+      memberPrice: r.memberPrice ?? "",
+      nonMemberPrice: r.nonMemberPrice ?? "",
+      pricingNotes: r.pricingNotes ?? "",
+      imageTreatment: r.imageTreatment,
+      imageAssetReference: r.imageAssetReference ?? "",
+      showContactInfo: r.showContactInfo,
+      contactName: r.contactName ?? "",
+      contactEmail: r.contactEmail ?? "",
+      contactPhone: r.contactPhone ?? "",
+      includePartner: r.includePartner,
+      partnerName: r.partnerName ?? "",
+      partnerLogoAssetReference: r.partnerLogoAssetReference ?? "",
+    });
+  }
+
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort();
+    };
+  }, []);
+
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const nextErrors = validate(form);
@@ -261,13 +323,20 @@ export function CreativePortalForm() {
       return;
     }
 
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const timeoutId = window.setTimeout(() => controller.abort(), SUBMIT_TIMEOUT_MS);
+
     setSubmitting(true);
+    setSubmitPhase("Submitting…");
     setResult(null);
 
     try {
       const response = await fetch("/api/creative-request", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
         body: JSON.stringify({
           source: "creative_engine_portal",
           assetType: form.assetType,
@@ -305,6 +374,7 @@ export function CreativePortalForm() {
         }),
       });
 
+      setSubmitPhase("Processing response…");
       const data = (await response.json()) as Record<string, unknown>;
       if (!response.ok || data.success !== true) {
         const message =
@@ -328,7 +398,10 @@ export function CreativePortalForm() {
       setResult({
         success: true,
         canvaDesignUrl: String(data.canvaDesignUrl ?? ""),
-        basecampMessageUrl: String(data.basecampMessageUrl ?? ""),
+        basecampMessageUrl:
+          typeof data.basecampMessageUrl === "string"
+            ? data.basecampMessageUrl
+            : null,
         canvaDesignId:
           typeof data.canvaDesignId === "string"
             ? data.canvaDesignId
@@ -336,40 +409,131 @@ export function CreativePortalForm() {
         basecampMessageId:
           typeof data.basecampMessageId === "string"
             ? data.basecampMessageId
-            : undefined,
+            : data.basecampMessageId === null
+              ? null
+              : undefined,
         templateTitle:
           typeof data.templateTitle === "string"
             ? data.templateTitle
             : undefined,
+        assetType:
+          typeof data.assetType === "string" ? data.assetType : undefined,
+        contentDensity:
+          typeof data.contentDensity === "string"
+            ? data.contentDensity
+            : undefined,
+        basecampPosting:
+          data.basecampPosting === "posted" ||
+          data.basecampPosting === "disabled" ||
+          data.basecampPosting === "skipped"
+            ? data.basecampPosting
+            : undefined,
+        testMode: data.testMode === true,
         brandChecks:
           data.brandChecks && typeof data.brandChecks === "object"
             ? (data.brandChecks as BrandChecks)
             : undefined,
       });
-    } catch {
-      setResult({
-        success: false,
-        message: "Network error. Please try again.",
-      });
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        setResult({
+          success: false,
+          message:
+            "Request timed out. Check status and try again — the portal will not keep spinning.",
+          code: "CLIENT_TIMEOUT",
+        });
+      } else {
+        setResult({
+          success: false,
+          message: "Network error. Please try again.",
+        });
+      }
     } finally {
+      window.clearTimeout(timeoutId);
       setSubmitting(false);
+      setSubmitPhase(null);
     }
   }
 
   if (result?.success) {
     const checks = result.brandChecks;
+    const assetLabel =
+      result.assetType && result.assetType in ASSET_TYPE_LABELS
+        ? ASSET_TYPE_LABELS[result.assetType as AssetType]
+        : result.assetType;
     return (
       <section
         className="portal-result portal-result--success"
         aria-live="polite"
       >
-        <p className="portal-eyebrow">Creative generated</p>
-        <h2 className="portal-result-title">Creative generated</h2>
-        <p className="portal-result-copy">
-          An editable Canva design was created
-          {result.templateTitle ? ` using ${result.templateTitle}` : ""} and
-          posted to Marketing Project Requests.
+        <p className="portal-eyebrow">
+          {result.testMode || testMode
+            ? "Test submission accepted"
+            : "Creative generated"}
         </p>
+        <h2 className="portal-result-title">
+          {result.testMode || testMode
+            ? "Test submission accepted"
+            : "Creative generated"}
+        </h2>
+        {(result.testMode || testMode) && (
+          <p className="portal-review-warn">
+            TEST MODE — native portal only. Live Google Form requests are not
+            processed.
+          </p>
+        )}
+        <dl className="portal-review">
+          {assetLabel ? (
+            <div>
+              <dt>Asset family</dt>
+              <dd>{assetLabel}</dd>
+            </div>
+          ) : null}
+          {result.templateTitle ? (
+            <div>
+              <dt>Template</dt>
+              <dd>{result.templateTitle}</dd>
+            </div>
+          ) : null}
+          {result.contentDensity ? (
+            <div>
+              <dt>Content density</dt>
+              <dd>{result.contentDensity}</dd>
+            </div>
+          ) : null}
+          <div>
+            <dt>QR status</dt>
+            <dd>
+              {checks?.qrGenerated
+                ? "Generated"
+                : checks
+                  ? "Not generated"
+                  : "—"}
+            </dd>
+          </div>
+          <div>
+            <dt>Brand validation</dt>
+            <dd>
+              {checks?.brandTreatment && checks?.approvedLayout
+                ? "Passed"
+                : checks
+                  ? "Incomplete"
+                  : "—"}
+            </dd>
+          </div>
+          <div>
+            <dt>Basecamp</dt>
+            <dd>
+              {result.basecampPosting === "posted"
+                ? "Posted after Canva success"
+                : result.basecampPosting === "disabled"
+                  ? "Posting disabled"
+                  : result.basecampMessageUrl
+                    ? "Posted"
+                    : "Not posted"}
+            </dd>
+          </div>
+        </dl>
         {checks ? (
           <ul className="portal-checks">
             {checks.approvedLayout ? (
@@ -431,13 +595,33 @@ export function CreativePortalForm() {
         <div className="portal-alert" role="alert">
           {result.code === "NO_APPROVED_TEMPLATE" ? (
             <div className="portal-missing-template">
-              <strong>No matching approved layout</strong>
+              <strong>NO_APPROVED_TEMPLATE</strong>
               <pre className="portal-pre">{result.message}</pre>
             </div>
           ) : (
             result.message
           )}
         </div>
+      ) : null}
+
+      {testMode ? (
+        <Section title="Test fixtures">
+          <p className="portal-section-hint">
+            Load a deterministic offline test request (safe example URLs only).
+          </p>
+          <div className="portal-result-actions">
+            {CREATIVE_TEST_FIXTURE_LIST.map((fixture) => (
+              <button
+                key={fixture.id}
+                type="button"
+                className="portal-btn portal-btn--secondary"
+                onClick={() => loadFixture(fixture.id)}
+              >
+                {fixture.label}
+              </button>
+            ))}
+          </div>
+        </Section>
       ) : null}
 
       <Section title="What are we making?">
@@ -841,8 +1025,18 @@ export function CreativePortalForm() {
         className="portal-btn portal-btn--primary portal-submit"
         disabled={submitting}
       >
-        {submitting ? "Generating…" : "Generate Creative"}
+        {submitting
+          ? submitPhase || "Working…"
+          : testMode
+            ? "Run test submission"
+            : "Generate Creative"}
       </button>
+      {submitting ? (
+        <p className="portal-section-hint" style={{ marginTop: "0.5rem" }}>
+          This request will time out after 90 seconds instead of spinning
+          forever.
+        </p>
+      ) : null}
     </form>
   );
 }

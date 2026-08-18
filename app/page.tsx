@@ -1,5 +1,9 @@
 import { Fraunces, Outfit } from "next/font/google";
 import { CreativePortalForm } from "@/components/CreativePortalForm";
+import { TestModeBanner } from "@/components/TestModeBanner";
+import { isCreativeEngineTestMode } from "@/lib/creative/test-mode";
+
+export const dynamic = "force-dynamic";
 
 const display = Fraunces({
   subsets: ["latin"],
@@ -12,6 +16,8 @@ const sans = Outfit({
 });
 
 export default function HomePage() {
+  const testMode = isCreativeEngineTestMode();
+
   return (
     <main className={`${display.variable} ${sans.variable} portal-page`}>
       <div className="portal-atmosphere" aria-hidden="true" />
@@ -24,7 +30,8 @@ export default function HomePage() {
             Project Requests workflow.
           </p>
         </header>
-        <CreativePortalForm />
+        {testMode ? <TestModeBanner /> : null}
+        <CreativePortalForm testMode={testMode} />
       </div>
     </main>
   );

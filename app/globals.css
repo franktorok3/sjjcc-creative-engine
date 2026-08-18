@@ -195,6 +195,31 @@ body {
   border: 1px solid color-mix(in srgb, var(--portal-danger) 25%, transparent);
 }
 
+.portal-test-banner {
+  margin: 0 0 1.25rem;
+  padding: 1rem 1.15rem;
+  border-radius: 0.85rem;
+  background: color-mix(in srgb, var(--portal-sea) 10%, var(--portal-foam));
+  border: 1px solid color-mix(in srgb, var(--portal-sea) 28%, transparent);
+  color: var(--portal-sea-deep);
+}
+
+.portal-test-banner__title {
+  margin: 0 0 0.35rem;
+  font-family: var(--font-portal-display), Georgia, serif;
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.portal-test-banner__copy {
+  margin: 0;
+  font-size: 0.95rem;
+  line-height: 1.45;
+  color: var(--portal-ink);
+}
+
 .portal-btn {
   display: inline-flex;
   align-items: center;

@@ -73,12 +73,12 @@ export default async function AdminShellsPage() {
         style={{ width: "min(960px, calc(100% - 2rem))" }}
       >
         <header className="portal-hero">
-          <p className="portal-brand">CE Shell Family</p>
+          <p className="portal-brand">Operator Tool — Shell Generation</p>
           <h1 className="portal-title">Creative Engine shell preview</h1>
           <p className="portal-subtitle">
-            Operator review for the first three standard-light shells. Open each
-            Canva design and complete the finishing checklist. Not for ordinary
-            portal users.
+            Operator-only tool for the first three standard-light shells. Open
+            each Canva design and complete the finishing checklist. Not linked
+            from the ordinary portal and not for public users.
           </p>
         </header>
 
