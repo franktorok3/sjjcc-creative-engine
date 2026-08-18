@@ -8,6 +8,7 @@ import {
   assertBrandTemplateStructure,
   BrandStructureError,
 } from "@/lib/canva/brand-validation";
+import { createDesignFromBrandTemplate } from "@/lib/canva/designs";
 import { getBrandTemplateDataset } from "@/lib/canva/templates";
 import {
   attachQrAutofillFromDestinationUrl,
@@ -66,14 +67,16 @@ export type WorkflowSuccess = {
   qrAssetId?: string;
   templateTitle?: string;
   assetType?: string;
-  creationMethod?: "brand_template_autofill";
+  creationMethod?: "brand_template_autofill" | "brand_template_copy";
   layoutSource?:
     | "approved_registry"
     | "shell_brand_template"
     | "live_discovery"
-    | "configured_env";
+    | "configured_env"
+    | "agentic_fallback";
   shellKey?: string;
   shellTitle?: string;
+  autofillApplied?: boolean;
   brandChecks?: {
     approvedLayout: boolean;
     brandTreatment: boolean;
@@ -149,12 +152,13 @@ export async function runFormToCanvaToBasecampWorkflow(
     let templateTitle: string;
     let dataset: CanvaBrandTemplateDataset;
     let layoutSource: NonNullable<WorkflowSuccess["layoutSource"]>;
-    let data: CanvaAutofillData;
-    let mappedRoles: string[];
+    let data: CanvaAutofillData = {};
+    let mappedRoles: string[] = [];
     let approvedLayout = false;
     let liveQrFieldName: string | null = null;
     let shellKey: string | undefined;
     let shellTitle: string | undefined;
+    let fillMode: "autofill" | "visual_copy" = "autofill";
 
     if (selection.ok) {
       const template = selection.template;
@@ -218,7 +222,7 @@ export async function runFormToCanvaToBasecampWorkflow(
       data = mapped.data;
       mappedRoles = mapped.mappedRoles;
     } else {
-      // Form → shell shape → Canva Brand Template Autofill (never PPTX).
+      // Form → shell → Canva Brand Template (Autofill when possible; never PPTX).
       const live = await selectLiveCanvaLayout({ request, requestId });
       brandTemplateId = live.id;
       templateTitle = live.title;
@@ -226,16 +230,19 @@ export async function runFormToCanvaToBasecampWorkflow(
       layoutSource = live.selectionMode;
       shellKey = live.shellKey;
       shellTitle = live.shellTitle;
+      fillMode = live.fillMode;
 
-      const mapped = mapRequestToLiveCanvaDataset({
-        request,
-        classification,
-        dataset,
-        requestId,
-      });
-      data = mapped.data;
-      mappedRoles = mapped.mappedRoles;
-      liveQrFieldName = mapped.qrFieldName;
+      if (live.fillMode === "autofill") {
+        const mapped = mapRequestToLiveCanvaDataset({
+          request,
+          classification,
+          dataset,
+          requestId,
+        });
+        data = mapped.data;
+        mappedRoles = mapped.mappedRoles;
+        liveQrFieldName = mapped.qrFieldName;
+      }
     }
 
     logCreativeStage("dataset_validated", {
@@ -243,11 +250,12 @@ export async function runFormToCanvaToBasecampWorkflow(
       templateId: brandTemplateId,
       fieldCount: Object.keys(dataset).length,
       layoutSource,
+      fillMode,
     });
     logMilestone(
       requestId,
       "CANVA_TEMPLATE_VALIDATED",
-      `templateId=${brandTemplateId} source=${layoutSource}`,
+      `templateId=${brandTemplateId} source=${layoutSource} fill=${fillMode}`,
     );
 
     assertNoBrandOverwriteFromUser(data);
@@ -263,7 +271,7 @@ export async function runFormToCanvaToBasecampWorkflow(
 
     let qrGenerated = false;
     let qrAssetId: string | undefined;
-    if (classification.requiresQr) {
+    if (fillMode === "autofill" && classification.requiresQr) {
       if (liveQrFieldName && request.registrationUrl) {
         const withQr = await attachQrAutofillToField({
           destinationUrl: request.registrationUrl,
@@ -308,29 +316,66 @@ export async function runFormToCanvaToBasecampWorkflow(
 
     assertNoBrandOverwriteFromUser(data);
 
-    logCreativeStage("canva_autofill_started", {
-      requestId,
-      templateId: brandTemplateId,
-      layoutSource,
-    });
-    const design = await autofillBrandTemplate({
-      brandTemplateId,
-      title: promotionName,
-      data,
-      onJobStarted: (jobId) => {
-        logMilestone(requestId, "CANVA_AUTOFILL_STARTED", `jobId=${jobId}`);
-      },
-    });
+    let designId: string;
+    let designUrl: string;
+    let creationMethod: NonNullable<WorkflowSuccess["creationMethod"]>;
+    const autofillApplied = fillMode === "autofill";
 
-    logMilestone(
-      requestId,
-      "CANVA_AUTOFILL_COMPLETE",
-      `designId=${design.designId}`,
-    );
-    logCreativeStage("canva_autofill_complete", {
-      requestId,
-      designId: design.designId,
-    });
+    if (fillMode === "autofill") {
+      logCreativeStage("canva_autofill_started", {
+        requestId,
+        templateId: brandTemplateId,
+        layoutSource,
+      });
+      const design = await autofillBrandTemplate({
+        brandTemplateId,
+        title: promotionName,
+        data,
+        onJobStarted: (jobId) => {
+          logMilestone(requestId, "CANVA_AUTOFILL_STARTED", `jobId=${jobId}`);
+        },
+      });
+      designId = design.designId;
+      designUrl = design.editUrl || design.designUrl;
+      creationMethod = "brand_template_autofill";
+      logMilestone(
+        requestId,
+        "CANVA_AUTOFILL_COMPLETE",
+        `designId=${design.designId}`,
+      );
+      logCreativeStage("canva_autofill_complete", {
+        requestId,
+        designId: design.designId,
+      });
+    } else {
+      // Real Canva Brand Template layout opened as editable copy.
+      // Content Autofill is unavailable until Data Autofill fields are bound.
+      logCreativeStage("canva_autofill_started", {
+        requestId,
+        templateId: brandTemplateId,
+        mode: "visual_copy",
+      });
+      const design = await createDesignFromBrandTemplate({
+        brandTemplateId,
+        title: promotionName,
+      });
+      designId = design.id;
+      designUrl =
+        design.urls?.edit_url ||
+        design.urls?.view_url ||
+        `https://www.canva.com/design/${design.id}/edit`;
+      creationMethod = "brand_template_copy";
+      logCreativeStage("canva_autofill_complete", {
+        requestId,
+        designId,
+        mode: "visual_copy",
+      });
+      logMilestone(
+        requestId,
+        "CANVA_LAYOUT_COPY_COMPLETE",
+        `designId=${designId} (Autofill fields not bound yet)`,
+      );
+    }
 
     // Basecamp only after Canva success — never on Canva/QR/dataset failure.
     let basecampMessageId: string | null = null;
@@ -357,6 +402,7 @@ export async function runFormToCanvaToBasecampWorkflow(
               ? "Creative Engine Portal"
               : "Google Form",
           Layout: `${templateTitle} (${layoutSource})`,
+          Fill: autofillApplied ? "Autofill" : "Brand Template copy",
           ...(request.registrationUrl
             ? { "Registration URL": request.registrationUrl }
             : {}),
@@ -367,8 +413,10 @@ export async function runFormToCanvaToBasecampWorkflow(
           ].join(" · "),
           ...(isCreativeEngineTestMode() ? { Mode: "TEST MODE" } : {}),
         },
-        canvaDesignUrl: design.designUrl,
-        status: "Canva draft generated from Brand Template Autofill",
+        canvaDesignUrl: designUrl,
+        status: autofillApplied
+          ? "Canva draft generated from Brand Template Autofill"
+          : "Canva Brand Template copy opened (bind Autofill fields for full agentic fill)",
       });
 
       const message = await createMessageBoardMessage({
@@ -397,8 +445,8 @@ export async function runFormToCanvaToBasecampWorkflow(
     return {
       success: true,
       requestId,
-      canvaDesignId: design.designId,
-      canvaDesignUrl: design.designUrl,
+      canvaDesignId: designId,
+      canvaDesignUrl: designUrl,
       basecampMessageId,
       basecampMessageUrl,
       basecampPosting,
@@ -407,7 +455,8 @@ export async function runFormToCanvaToBasecampWorkflow(
       ...(qrAssetId ? { qrAssetId } : {}),
       templateTitle,
       assetType: request.assetType,
-      creationMethod: "brand_template_autofill",
+      creationMethod,
+      autofillApplied,
       layoutSource,
       ...(shellKey ? { shellKey } : {}),
       ...(shellTitle ? { shellTitle } : {}),

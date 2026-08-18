@@ -71,6 +71,10 @@ type SuccessResult = {
   contentDensity?: string;
   basecampPosting?: "posted" | "disabled" | "skipped";
   testMode?: boolean;
+  creationMethod?: "brand_template_autofill" | "brand_template_copy";
+  autofillApplied?: boolean;
+  layoutSource?: string;
+  shellTitle?: string;
   brandChecks?: BrandChecks;
 };
 
@@ -429,6 +433,21 @@ export function CreativePortalForm({ testMode = false }: PortalFormProps) {
             ? data.basecampPosting
             : undefined,
         testMode: data.testMode === true,
+        creationMethod:
+          data.creationMethod === "brand_template_autofill" ||
+          data.creationMethod === "brand_template_copy"
+            ? data.creationMethod
+            : undefined,
+        autofillApplied:
+          typeof data.autofillApplied === "boolean"
+            ? data.autofillApplied
+            : undefined,
+        layoutSource:
+          typeof data.layoutSource === "string"
+            ? data.layoutSource
+            : undefined,
+        shellTitle:
+          typeof data.shellTitle === "string" ? data.shellTitle : undefined,
         brandChecks:
           data.brandChecks && typeof data.brandChecks === "object"
             ? (data.brandChecks as BrandChecks)
@@ -493,6 +512,22 @@ export function CreativePortalForm({ testMode = false }: PortalFormProps) {
             <div>
               <dt>Template</dt>
               <dd>{result.templateTitle}</dd>
+            </div>
+          ) : null}
+          {result.shellTitle ? (
+            <div>
+              <dt>Shell</dt>
+              <dd>{result.shellTitle}</dd>
+            </div>
+          ) : null}
+          {result.autofillApplied !== undefined ? (
+            <div>
+              <dt>Agentic fill</dt>
+              <dd>
+                {result.autofillApplied
+                  ? "Autofill applied"
+                  : "Brand Template copy (bind Autofill for full fill)"}
+              </dd>
             </div>
           ) : null}
           {result.contentDensity ? (
@@ -1009,15 +1044,16 @@ export function CreativePortalForm({ testMode = false }: PortalFormProps) {
             <dd>
               {selection.ok
                 ? "Matching approved Canva layout"
-                : "Shell → Canva Brand Template Autofill"}
+                : "Agentic: shell → live Canva Brand Template"}
             </dd>
           </div>
         </dl>
         {willUseShellCanva ? (
           <p className="portal-section-hint">
-            This submission will select the Creative Engine shell for this asset
-            family, then fill a live Canva Brand Template via Autofill. PPTX is
-            not used.
+            This submission picks the Creative Engine shell for this asset
+            family, then Autofills a live Canva Brand Template when Autofill
+            fields exist. If only a visual Brand Template is available, it opens
+            an editable Canva copy. PPTX is not used.
           </p>
         ) : null}
       </Section>

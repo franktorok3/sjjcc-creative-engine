@@ -12,22 +12,19 @@ export type CreatedCanvaDesign = {
 };
 
 /**
- * Create a blank custom-size Canva design (fallback path).
+ * Create an editable Canva design by copying a Brand Template (preview API).
+ * Used when a visual Brand Template exists but Autofill fields are not bound yet.
  */
-export async function createBlankCustomDesign(input: {
-  title: string;
-  widthPx: number;
-  heightPx: number;
+export async function createDesignFromBrandTemplate(input: {
+  brandTemplateId: string;
+  title?: string;
 }): Promise<CreatedCanvaDesign> {
   const response = await canvaFetch<{ design: CreatedCanvaDesign }>("/designs", {
     method: "POST",
     body: {
-      design_type: {
-        type: "custom",
-        width: input.widthPx,
-        height: input.heightPx,
-      },
-      title: input.title.slice(0, 255),
+      type: "brand_template",
+      brand_template_id: input.brandTemplateId,
+      ...(input.title ? { title: input.title.slice(0, 255) } : {}),
     },
   });
   return response.design;
