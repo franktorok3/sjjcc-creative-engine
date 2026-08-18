@@ -60,11 +60,10 @@ export function validateAutofillAgainstDataset(
       );
     }
 
-    // This PoC only fills text fields.
-    if (field.type !== "text") {
+    if (field.type !== "text" && field.type !== "image") {
       throw new CanvaAutofillError(
         "CANVA_FIELD_TYPE_UNSUPPORTED",
-        `Canva field "${fieldName}" is type "${field.type}". This PoC only autofills text fields; leave images/charts as template defaults.`,
+        `Canva field "${fieldName}" is type "${field.type}". Creative Engine only autofills text and image fields.`,
       );
     }
   }

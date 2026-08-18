@@ -121,6 +121,60 @@ export async function attachQrAutofillFromDestinationUrl(input: {
   };
 }
 
+/**
+ * Attach a generated QR image to an explicit live dataset field name.
+ * Used by Canva-native discovery when registry QR config is empty.
+ */
+export async function attachQrAutofillToField(input: {
+  destinationUrl: string;
+  qrField: string;
+  dataset: CanvaBrandTemplateDataset;
+  data: CanvaAutofillData;
+  requestId?: string;
+}): Promise<{ data: CanvaAutofillData; qrAssetId: string }> {
+  const destinationUrl = input.destinationUrl.trim();
+  if (!destinationUrl) {
+    throw new BrandStructureError(
+      "QR_URL_REQUIRED",
+      "Cannot attach QR without a destination URL.",
+    );
+  }
+
+  const datasetField = input.dataset[input.qrField];
+  if (!datasetField) {
+    throw new BrandStructureError(
+      "CANVA_QR_FIELD_MISSING",
+      `QR image field "${input.qrField}" is missing from the live Brand Template dataset.`,
+    );
+  }
+  if (datasetField.type !== "image") {
+    throw new BrandStructureError(
+      "CANVA_QR_FIELD_TYPE_INVALID",
+      `QR field "${input.qrField}" must be type "image", found "${datasetField.type}".`,
+    );
+  }
+
+  const png = await generateQrPngBuffer(destinationUrl);
+  const uploaded = await uploadCanvaImageAsset({
+    bytes: png,
+    name: "SJJCC Creative QR",
+  });
+
+  if (input.requestId) {
+    console.info(
+      `[${input.requestId}] QR uploaded assetId=${uploaded.assetId} field=${input.qrField}`,
+    );
+  }
+
+  return {
+    data: {
+      ...input.data,
+      [input.qrField]: { type: "image", asset_id: uploaded.assetId },
+    },
+    qrAssetId: uploaded.assetId,
+  };
+}
+
 /** Expose configured destination role for tests/docs. */
 export function destinationUrlRoleField(): string {
   return VARIABLE_DATASET_FIELD_ROLES.destinationUrl.canvaField;

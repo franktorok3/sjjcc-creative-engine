@@ -11,6 +11,7 @@ import {
 import { getBrandTemplateDataset } from "@/lib/canva/templates";
 import {
   attachQrAutofillFromDestinationUrl,
+  attachQrAutofillToField,
   flattenNamedValues,
   getPromotionName,
 } from "@/lib/creative/branded-mapping";
@@ -23,18 +24,19 @@ import {
 import {
   CreativeEngineError,
   DatasetMismatchError,
-  NoApprovedTemplateError,
 } from "@/lib/creative/errors";
 import { logFailed, logMilestone } from "@/lib/creative/logging";
 import {
   assertNoBrandOverwriteFromUser,
   mapCreativeRequestToCanvaData,
 } from "@/lib/creative/map-request";
+import { mapRequestToLiveCanvaDataset } from "@/lib/creative/map-request-to-live-dataset";
 import { MappingError } from "@/lib/creative/mapping";
 import {
   selectCreativeTemplate,
   validateTemplateDataset,
 } from "@/lib/creative/select-template";
+import { selectLiveCanvaLayout } from "@/lib/creative/select-live-canva-layout";
 import {
   isBasecampPostingEnabled,
   isCreativeEngineTestMode,
@@ -43,6 +45,7 @@ import {
 import type { CreativeRequest } from "@/lib/creative/types";
 import { ASSET_TYPE_LABELS } from "@/lib/creative/types";
 import { logCreativeStage } from "@/lib/creative/workflow-stage-log";
+import type { CanvaAutofillData, CanvaBrandTemplateDataset } from "@/lib/canva/types";
 
 /** @deprecated Prefer CreativeWorkflowPayload — kept for Google Form callers. */
 export type FormSubmitPayload = Extract<
@@ -63,6 +66,14 @@ export type WorkflowSuccess = {
   qrAssetId?: string;
   templateTitle?: string;
   assetType?: string;
+  creationMethod?: "brand_template_autofill";
+  layoutSource?:
+    | "approved_registry"
+    | "shell_brand_template"
+    | "live_discovery"
+    | "configured_env";
+  shellKey?: string;
+  shellTitle?: string;
   brandChecks?: {
     approvedLayout: boolean;
     brandTreatment: boolean;
@@ -75,11 +86,10 @@ export type WorkflowSuccess = {
  * Shared Creative Engine path for Google Form and the native portal.
  *
  * Flow:
- * classify → select approved template → validate dataset →
- * QR/assets → Canva Autofill → Basecamp
+ * classify → prefer approved registry → else form asset → CE shell shape →
+ * live Canva Brand Template for that shell → Autofill fills content → Basecamp
  *
- * Does not fall back to arbitrary CANVA_BRAND_TEMPLATE_ID when no approved
- * registry match exists (Phase 1: registry empty → NO_APPROVED_TEMPLATE).
+ * Always uses a real Canva Brand Template layout (never PPTX).
  */
 export async function runFormToCanvaToBasecampWorkflow(
   payload: CreativeWorkflowPayload,
@@ -134,98 +144,117 @@ export async function runFormToCanvaToBasecampWorkflow(
     });
 
     const selection = selectCreativeTemplate(request, classification);
-    if (!selection.ok) {
-      throw new NoApprovedTemplateError(selection.reason, {
-        requirements: selection.requirements,
-        summary: {
-          asset: ASSET_TYPE_LABELS[request.assetType],
-          content: classification.density,
-          image: request.imageTreatment,
-          contact: classification.contactTreatment,
-          partner:
-            classification.partnerTreatment === "sjjcc_uja_partner"
-              ? "Yes"
-              : "SJJCC + UJA",
-          registration: classification.requiresQr
-            ? "QR enabled"
-            : request.requiresRegistration
-              ? "URL only"
-              : "None",
-        },
-      });
-    }
 
-    const template = selection.template;
-    logMilestone(
-      requestId,
-      "TEMPLATE_SELECTED",
-      `title=${template.title} id=${template.id}`,
-    );
-    logCreativeStage("template_selected", {
-      requestId,
-      templateTitle: template.title,
-      templateId: template.id,
-    });
+    let brandTemplateId: string;
+    let templateTitle: string;
+    let dataset: CanvaBrandTemplateDataset;
+    let layoutSource: NonNullable<WorkflowSuccess["layoutSource"]>;
+    let data: CanvaAutofillData;
+    let mappedRoles: string[];
+    let approvedLayout = false;
+    let liveQrFieldName: string | null = null;
+    let shellKey: string | undefined;
+    let shellTitle: string | undefined;
 
-    const dataset = await getBrandTemplateDataset(template.id);
-    const liveTypes: Record<string, string> = {};
-    for (const [name, field] of Object.entries(dataset)) {
-      liveTypes[name] = field.type;
-    }
+    if (selection.ok) {
+      const template = selection.template;
+      brandTemplateId = template.id;
+      templateTitle = template.title;
+      layoutSource = "approved_registry";
+      approvedLayout = true;
 
-    const datasetCheck = validateTemplateDataset(template, liveTypes);
-    if (!datasetCheck.ok) {
-      throw new DatasetMismatchError(
-        [
-          "Selected template dataset does not match the approved registry contract.",
-          datasetCheck.missing.length
-            ? `Missing fields: ${datasetCheck.missing.join(", ")}`
-            : "",
-          datasetCheck.typeMismatches.length
-            ? `Type mismatches: ${datasetCheck.typeMismatches.join("; ")}`
-            : "",
-        ]
-          .filter(Boolean)
-          .join(" "),
-        datasetCheck,
+      logMilestone(
+        requestId,
+        "TEMPLATE_SELECTED",
+        `title=${template.title} id=${template.id}`,
       );
+      logCreativeStage("template_selected", {
+        requestId,
+        templateTitle: template.title,
+        templateId: template.id,
+        mode: "approved_registry",
+      });
+
+      dataset = await getBrandTemplateDataset(template.id);
+      const liveTypes: Record<string, string> = {};
+      for (const [name, field] of Object.entries(dataset)) {
+        liveTypes[name] = field.type;
+      }
+
+      const datasetCheck = validateTemplateDataset(template, liveTypes);
+      if (!datasetCheck.ok) {
+        throw new DatasetMismatchError(
+          [
+            "Selected template dataset does not match the approved registry contract.",
+            datasetCheck.missing.length
+              ? `Missing fields: ${datasetCheck.missing.join(", ")}`
+              : "",
+            datasetCheck.typeMismatches.length
+              ? `Type mismatches: ${datasetCheck.typeMismatches.join("; ")}`
+              : "",
+          ]
+            .filter(Boolean)
+            .join(" "),
+          datasetCheck,
+        );
+      }
+
+      if (template.supportsQr) {
+        assertBrandTemplateStructure(dataset);
+        logMilestone(
+          requestId,
+          "CANVA_BRAND_STRUCTURE_OK",
+          `templateId=${template.id}`,
+        );
+      }
+
+      const mapped = mapCreativeRequestToCanvaData({
+        request,
+        classification,
+        template,
+        liveDataset: dataset,
+        requestId,
+      });
+      data = mapped.data;
+      mappedRoles = mapped.mappedRoles;
+    } else {
+      // Form → shell shape → Canva Brand Template Autofill (never PPTX).
+      const live = await selectLiveCanvaLayout({ request, requestId });
+      brandTemplateId = live.id;
+      templateTitle = live.title;
+      dataset = live.dataset;
+      layoutSource = live.selectionMode;
+      shellKey = live.shellKey;
+      shellTitle = live.shellTitle;
+
+      const mapped = mapRequestToLiveCanvaDataset({
+        request,
+        classification,
+        dataset,
+        requestId,
+      });
+      data = mapped.data;
+      mappedRoles = mapped.mappedRoles;
+      liveQrFieldName = mapped.qrFieldName;
     }
+
     logCreativeStage("dataset_validated", {
       requestId,
-      templateId: template.id,
-      fieldCount: Object.keys(liveTypes).length,
+      templateId: brandTemplateId,
+      fieldCount: Object.keys(dataset).length,
+      layoutSource,
     });
-
-    // Soft structure check for QR role when template claims QR support
-    if (template.supportsQr) {
-      try {
-        assertBrandTemplateStructure(dataset);
-        logMilestone(requestId, "CANVA_BRAND_STRUCTURE_OK", `templateId=${template.id}`);
-      } catch (error) {
-        // If structure assert fails only because of unconfigured env template, rethrow brand errors
-        if (error instanceof BrandStructureError) {
-          throw error;
-        }
-        throw error;
-      }
-    }
-
-    logMilestone(requestId, "CANVA_TEMPLATE_VALIDATED", `templateId=${template.id}`);
-
-    const { data: mappedData, mappedRoles } = mapCreativeRequestToCanvaData({
-      request,
-      classification,
-      template,
-      liveDataset: dataset,
+    logMilestone(
       requestId,
-    });
-    let data = mappedData;
+      "CANVA_TEMPLATE_VALIDATED",
+      `templateId=${brandTemplateId} source=${layoutSource}`,
+    );
+
     assertNoBrandOverwriteFromUser(data);
 
     const fields = flattenNamedValues(
       payload.fields ?? creativeRequestToFormFields(request),
     );
-    // Ensure registration URL is present for QR destination lookup
     if (request.registrationUrl && !fields["Registration URL"]) {
       fields["Registration URL"] = request.registrationUrl;
     }
@@ -235,20 +264,40 @@ export async function runFormToCanvaToBasecampWorkflow(
     let qrGenerated = false;
     let qrAssetId: string | undefined;
     if (classification.requiresQr) {
-      const withQr = await attachQrAutofillFromDestinationUrl({
-        fields,
-        dataset,
-        data,
-        requestId,
-      });
-      data = withQr.data;
-      qrAssetId = withQr.qrAssetId;
-      qrGenerated = !withQr.skipped;
+      if (liveQrFieldName && request.registrationUrl) {
+        const withQr = await attachQrAutofillToField({
+          destinationUrl: request.registrationUrl,
+          qrField: liveQrFieldName,
+          dataset,
+          data,
+          requestId,
+        });
+        data = withQr.data;
+        qrAssetId = withQr.qrAssetId;
+        qrGenerated = true;
+      } else if (selection.ok) {
+        const withQr = await attachQrAutofillFromDestinationUrl({
+          fields,
+          dataset,
+          data,
+          requestId,
+        });
+        data = withQr.data;
+        qrAssetId = withQr.qrAssetId;
+        qrGenerated = !withQr.skipped;
+      } else if (request.registrationUrl) {
+        logMilestone(
+          requestId,
+          "CANVA_QR_SKIPPED",
+          "Live Canva layout has no QR image Autofill field",
+        );
+      }
+
       if (qrGenerated) {
         logMilestone(
           requestId,
           "CANVA_QR_ATTACHED",
-          `assetId=${withQr.qrAssetId}`,
+          `assetId=${qrAssetId}`,
         );
         logCreativeStage("qr_generated", {
           requestId,
@@ -261,10 +310,11 @@ export async function runFormToCanvaToBasecampWorkflow(
 
     logCreativeStage("canva_autofill_started", {
       requestId,
-      templateId: template.id,
+      templateId: brandTemplateId,
+      layoutSource,
     });
     const design = await autofillBrandTemplate({
-      brandTemplateId: template.id,
+      brandTemplateId,
       title: promotionName,
       data,
       onJobStarted: (jobId) => {
@@ -306,6 +356,7 @@ export async function runFormToCanvaToBasecampWorkflow(
             request.source === "creative_engine_portal"
               ? "Creative Engine Portal"
               : "Google Form",
+          Layout: `${templateTitle} (${layoutSource})`,
           ...(request.registrationUrl
             ? { "Registration URL": request.registrationUrl }
             : {}),
@@ -317,7 +368,7 @@ export async function runFormToCanvaToBasecampWorkflow(
           ...(isCreativeEngineTestMode() ? { Mode: "TEST MODE" } : {}),
         },
         canvaDesignUrl: design.designUrl,
-        status: "Canva draft generated (approved Creative Engine layout)",
+        status: "Canva draft generated from Brand Template Autofill",
       });
 
       const message = await createMessageBoardMessage({
@@ -354,10 +405,14 @@ export async function runFormToCanvaToBasecampWorkflow(
       testMode: isCreativeEngineTestMode(),
       contentDensity: classification.density,
       ...(qrAssetId ? { qrAssetId } : {}),
-      templateTitle: template.title,
+      templateTitle,
       assetType: request.assetType,
+      creationMethod: "brand_template_autofill",
+      layoutSource,
+      ...(shellKey ? { shellKey } : {}),
+      ...(shellTitle ? { shellTitle } : {}),
       brandChecks: {
-        approvedLayout: true,
+        approvedLayout,
         brandTreatment: true,
         qrGenerated: classification.requiresQr ? qrGenerated : true,
         contentMapped: mappedRoles.length > 0,
@@ -402,7 +457,9 @@ function inferStage(error: unknown): string {
   const name = (error as { name?: string }).name ?? "";
   const code = (error as { code?: string }).code ?? "";
 
-  if (code === "NO_APPROVED_TEMPLATE") return "template_selection";
+  if (code === "NO_APPROVED_TEMPLATE" || code === "NO_CANVA_LAYOUT") {
+    return "template_selection";
+  }
   if (code === "DATASET_MISMATCH") return "dataset_validation";
   if (
     name.includes("Mapping") ||

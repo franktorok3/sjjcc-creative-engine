@@ -587,15 +587,17 @@ export function CreativePortalForm({ testMode = false }: PortalFormProps) {
 
   const channels = ASSET_TYPE_META[form.assetType].channels;
   const { classification, selection } = preview;
-  const missingTemplate = !selection.ok;
+  const willUseShellCanva = !selection.ok;
 
   return (
     <form className="portal-form" onSubmit={onSubmit} noValidate>
       {result && !result.success ? (
         <div className="portal-alert" role="alert">
-          {result.code === "NO_APPROVED_TEMPLATE" ? (
+          {result.code === "NO_CANVA_LAYOUT" ||
+          result.code === "NO_APPROVED_TEMPLATE" ||
+          result.code === "NO_SHELL_FOR_ASSET" ? (
             <div className="portal-missing-template">
-              <strong>NO_APPROVED_TEMPLATE</strong>
+              <strong>{result.code ?? "NO_CANVA_LAYOUT"}</strong>
               <pre className="portal-pre">{result.message}</pre>
             </div>
           ) : (
@@ -1006,16 +1008,16 @@ export function CreativePortalForm({ testMode = false }: PortalFormProps) {
             <dt>Template</dt>
             <dd>
               {selection.ok
-                ? "Matching approved layout"
-                : "No matching layout"}
+                ? "Matching approved Canva layout"
+                : "Shell → Canva Brand Template Autofill"}
             </dd>
           </div>
         </dl>
-        {missingTemplate ? (
-          <p className="portal-review-warn">
-            No approved Creative Engine layout matches this combination yet.
-            Generating will explain what is missing instead of guessing a
-            template.
+        {willUseShellCanva ? (
+          <p className="portal-section-hint">
+            This submission will select the Creative Engine shell for this asset
+            family, then fill a live Canva Brand Template via Autofill. PPTX is
+            not used.
           </p>
         ) : null}
       </Section>
