@@ -238,7 +238,7 @@ curl -s -X POST "$APP/api/form-submit" \
 
 Local OAuth tokens are stored encrypted in `.data/canva-tokens.enc` (gitignored).
 
-**On Vercel, the local filesystem is ephemeral and not shared across instances.** Do not rely on it for production OAuth token persistence — use an external store (DB / KV / secrets). Env-provided `CANVA_ACCESS_TOKEN` + `CANVA_REFRESH_TOKEN` work for short tests if you refresh them manually when expired.
+**On Vercel:** set `KV_REST_API_URL` + `KV_REST_API_TOKEN` (or Upstash REST equivalents) plus `CREDENTIAL_ENCRYPTION_KEY` so Canva tokens auto-renew. Env bootstrap tokens (`CANVA_ACCESS_TOKEN` / `CANVA_REFRESH_TOKEN`) are only needed for the first connect; rotated refresh tokens are persisted in KV.
 
 ---
 

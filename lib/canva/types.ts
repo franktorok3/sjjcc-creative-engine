@@ -6,8 +6,13 @@ export type CanvaTokenSet = {
   expiresAt: number; // unix ms
   scope?: string;
   tokenType?: string;
-  /** Where tokens were loaded from — env tokens must not auto-refresh in this PoC. */
-  source?: "env" | "store";
+  /**
+   * Where tokens were loaded from.
+   * - env: Vercel/process env (bootstrap only; prefer remote after first refresh)
+   * - store: local encrypted file
+   * - remote: durable KV / Upstash (required for auto-renew on Vercel)
+   */
+  source?: "env" | "store" | "remote";
 };
 
 export type CanvaDatasetFieldType = "text" | "image" | "chart";

@@ -76,7 +76,14 @@ See `docs/google-form-trigger.gs`.
 
 Local OAuth tokens are encrypted in `.data/canva-tokens.enc` (gitignored).
 
-**On Vercel, the local filesystem is ephemeral and not shared across instances.** Do not rely on it for production token persistence — use an external store (DB / KV / secrets manager). Env-provided `CANVA_ACCESS_TOKEN` + `CANVA_REFRESH_TOKEN` work for short local tests.
+**On Vercel**, add a Redis/KV store and set either:
+
+- `KV_REST_API_URL` + `KV_REST_API_TOKEN` (Vercel Marketplace Redis/KV), or
+- `UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN`
+
+Also set `CREDENTIAL_ENCRYPTION_KEY` so stored payloads are encrypted.
+
+With KV configured, Canva access tokens **auto-renew**: the app refreshes near expiry and writes the new access + refresh tokens to KV (Canva refresh tokens are single-use). Without KV on Vercel, expired tokens still require a manual reconnect.
 
 ## Dev commands
 

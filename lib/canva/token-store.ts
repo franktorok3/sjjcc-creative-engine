@@ -3,13 +3,23 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes } from "crypt
 import { mkdir, readFile, writeFile } from "fs/promises";
 import path from "path";
 import type { CanvaTokenSet } from "./types";
+import {
+  CANVA_TOKEN_KV_KEY,
+  isCanvaKvStoreConfigured,
+  kvGetString,
+  kvSetString,
+} from "./kv-token-store";
 
 /**
- * Local encrypted credential store for Canva OAuth tokens.
+ * Canva OAuth token persistence.
  *
- * WARNING (Vercel / serverless): The local filesystem is ephemeral and not shared
- * across instances. Do NOT rely on this store in production on Vercel.
- * Prefer CANVA_ACCESS_TOKEN (+ REFRESH) env vars for the PoC.
+ * Priority (load):
+ * 1. Durable KV / Upstash Redis (Vercel-safe, required for auto-refresh)
+ * 2. Local encrypted file (dev / non-Vercel)
+ * 3. CANVA_ACCESS_TOKEN + CANVA_REFRESH_TOKEN env
+ *
+ * On Vercel, rotated refresh tokens MUST be written to KV — filesystem is
+ * read-only / ephemeral and cannot store single-use refresh rotations.
  */
 
 const STORE_DIR = path.join(process.cwd(), ".data");
@@ -50,6 +60,37 @@ function decrypt(payload: string): string {
     decipher.update(encrypted),
     decipher.final(),
   ]).toString("utf8");
+}
+
+function parseStoredPayload(raw: string): CanvaTokenSet | null {
+  try {
+    const decrypted = decrypt(raw.trim());
+    const parsed = JSON.parse(decrypted) as StoredPayload;
+    if (parsed?.tokens?.accessToken && parsed?.tokens?.refreshToken) {
+      return {
+        ...parsed.tokens,
+        source: parsed.tokens.source ?? "store",
+      };
+    }
+  } catch {
+    // Corrupt / wrong key — fall through.
+  }
+  return null;
+}
+
+function encodeStoredPayload(tokens: CanvaTokenSet): string {
+  const payload: StoredPayload = {
+    tokens: {
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+      expiresAt: tokens.expiresAt,
+      scope: tokens.scope,
+      tokenType: tokens.tokenType,
+      source: tokens.source ?? "store",
+    },
+    updatedAt: new Date().toISOString(),
+  };
+  return encrypt(JSON.stringify(payload));
 }
 
 /**
@@ -105,37 +146,87 @@ export function tokensFromEnv(
   };
 }
 
-export async function loadCanvaTokens(): Promise<CanvaTokenSet | null> {
+/**
+ * True when a rotated refresh token can be persisted durably.
+ * Required before auto-refresh on Vercel (single-use Canva refresh tokens).
+ */
+export function canPersistCanvaTokenRotation(
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  if (isCanvaKvStoreConfigured(env)) return true;
+  // Local / non-Vercel: encrypted filesystem store works.
+  return env.VERCEL !== "1";
+}
+
+async function loadFromKv(): Promise<CanvaTokenSet | null> {
+  if (!isCanvaKvStoreConfigured()) return null;
+  try {
+    const raw = await kvGetString(CANVA_TOKEN_KV_KEY);
+    if (!raw) return null;
+    const tokens = parseStoredPayload(raw);
+    if (!tokens) return null;
+    return { ...tokens, source: "remote" };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(`[canva.token-store] KV load failed: ${message}`);
+    return null;
+  }
+}
+
+async function loadFromFilesystem(): Promise<CanvaTokenSet | null> {
   try {
     const raw = await readFile(STORE_FILE, "utf8");
-    const decrypted = decrypt(raw.trim());
-    const parsed = JSON.parse(decrypted) as StoredPayload;
-    if (parsed?.tokens?.accessToken && parsed?.tokens?.refreshToken) {
-      return { ...parsed.tokens, source: parsed.tokens.source ?? "store" };
-    }
+    const tokens = parseStoredPayload(raw);
+    if (!tokens) return null;
+    return { ...tokens, source: tokens.source ?? "store" };
   } catch {
-    // Missing or unreadable store — fall through to env.
+    return null;
   }
+}
+
+export async function loadCanvaTokens(): Promise<CanvaTokenSet | null> {
+  const remote = await loadFromKv();
+  if (remote) return remote;
+
+  const local = await loadFromFilesystem();
+  if (local) return local;
+
   return tokensFromEnv();
 }
 
 export async function saveCanvaTokens(tokens: CanvaTokenSet): Promise<void> {
+  const toStore: CanvaTokenSet = {
+    ...tokens,
+    source: tokens.source === "env" ? "store" : (tokens.source ?? "store"),
+  };
+  const encoded = encodeStoredPayload(toStore);
+
+  let kvSaved = false;
+  if (isCanvaKvStoreConfigured()) {
+    try {
+      kvSaved = await kvSetString(CANVA_TOKEN_KV_KEY, encoded);
+      if (kvSaved) {
+        toStore.source = "remote";
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn(`[canva.token-store] KV save failed: ${message}`);
+    }
+  }
+
   // Vercel serverless: /var/task is read-only — never mkdir/write .data there.
   if (process.env.VERCEL === "1") {
-    console.warn(
-      "[canva.token-store] VERCEL=1: skipping filesystem token write (read-only). Use OAUTH_EXPORT_TOKENS or CANVA_* env tokens.",
-    );
+    if (!kvSaved) {
+      console.warn(
+        "[canva.token-store] VERCEL=1: no durable KV save. Set KV_REST_API_URL + KV_REST_API_TOKEN (or UPSTASH_REDIS_REST_*) so Canva tokens can auto-renew.",
+      );
+    }
     return;
   }
 
   try {
     await mkdir(STORE_DIR, { recursive: true });
-    const payload: StoredPayload = {
-      tokens,
-      updatedAt: new Date().toISOString(),
-    };
-    const encrypted = encrypt(JSON.stringify(payload));
-    await writeFile(STORE_FILE, encrypted, { mode: 0o600 });
+    await writeFile(STORE_FILE, encoded, { mode: 0o600 });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.warn(
