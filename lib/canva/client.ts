@@ -51,12 +51,12 @@ export async function canvaFetch<T>(
     body: options.body ? JSON.stringify(options.body) : undefined,
   });
 
-  // PoC: do not auto-refresh on 401 — Canva refresh tokens are single-use and
-  // env persistence cannot rotate them atomically on Vercel.
+  // Prefer CANVA_REAUTH_REQUIRED over silent refresh here — token rotation is
+  // owned by getValidCanvaAccessToken (durable KV / local store).
   if (response.status === 401 || response.status === 403) {
     throw new CanvaAuthError(
       "CANVA_REAUTH_REQUIRED",
-      `Canva rejected the access token (${response.status}). Revisit /api/canva/connect and update Vercel env tokens.`,
+      `Canva rejected the access token (${response.status}). If auto-renew is configured, retry once; otherwise revisit /api/canva/connect.`,
     );
   }
 

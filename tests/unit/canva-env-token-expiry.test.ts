@@ -1,12 +1,30 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { rm } from "fs/promises";
+import path from "path";
 import {
+  canPersistCanvaTokenRotation,
   readJwtExpiryMs,
   tokensFromEnv,
 } from "@/lib/canva/token-store";
 
+const LOCAL_TOKEN_FILE = path.join(
+  process.cwd(),
+  ".data",
+  "canva-tokens.enc",
+);
+
+async function clearLocalCanvaTokenFile(): Promise<void> {
+  try {
+    await rm(LOCAL_TOKEN_FILE, { force: true });
+  } catch {
+    // ignore
+  }
+}
+
 function makeJwt(expSeconds: number): string {
   const header = Buffer.from(
     JSON.stringify({ alg: "none", typ: "JWT" }),
+    "utf8",
   ).toString("base64url");
   const payload = Buffer.from(JSON.stringify({ exp: expSeconds })).toString(
     "base64url",
@@ -14,8 +32,9 @@ function makeJwt(expSeconds: number): string {
   return `${header}.${payload}.sig`;
 }
 
-describe("Canva env token expiry", () => {
-  afterEach(() => {
+describe("Canva env token expiry + auto-renew", () => {
+  afterEach(async () => {
+    await clearLocalCanvaTokenFile();
     vi.unstubAllEnvs();
     vi.resetModules();
     vi.restoreAllMocks();
@@ -39,6 +58,24 @@ describe("Canva env token expiry", () => {
     expect(tokens!.expiresAt).toBeGreaterThan(Date.now());
   });
 
+  it("canPersistCanvaTokenRotation is false on Vercel without KV", () => {
+    expect(
+      canPersistCanvaTokenRotation({
+        VERCEL: "1",
+      }),
+    ).toBe(false);
+  });
+
+  it("canPersistCanvaTokenRotation is true when KV env is present", () => {
+    expect(
+      canPersistCanvaTokenRotation({
+        VERCEL: "1",
+        KV_REST_API_URL: "https://example-kv.upstash.io",
+        KV_REST_API_TOKEN: "test-token",
+      }),
+    ).toBe(true);
+  });
+
   it("fresh env JWT does not trigger refresh", async () => {
     const exp = Math.floor(Date.now() / 1000) + 10_000;
     vi.stubEnv("CANVA_ACCESS_TOKEN", makeJwt(exp));
@@ -59,8 +96,9 @@ describe("Canva env token expiry", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("expired env JWT returns CANVA_REAUTH_REQUIRED without refresh", async () => {
+  it("expired env JWT on Vercel without KV returns CANVA_REAUTH_REQUIRED", async () => {
     const exp = Math.floor(Date.now() / 1000) - 120;
+    vi.stubEnv("VERCEL", "1");
     vi.stubEnv("CANVA_ACCESS_TOKEN", makeJwt(exp));
     vi.stubEnv("CANVA_REFRESH_TOKEN", "refresh-placeholder");
     vi.stubEnv("CANVA_CLIENT_ID", "client");
@@ -79,30 +117,98 @@ describe("Canva env token expiry", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("multiple concurrent store refreshes share a single flight", async () => {
+  it("expired env JWT auto-refreshes when durable store is available", async () => {
+    const exp = Math.floor(Date.now() / 1000) - 120;
+    vi.stubEnv("CANVA_ACCESS_TOKEN", makeJwt(exp));
+    vi.stubEnv("CANVA_REFRESH_TOKEN", "refresh-placeholder");
     vi.stubEnv("CANVA_CLIENT_ID", "client");
     vi.stubEnv("CANVA_CLIENT_SECRET", "secret");
     vi.stubEnv("CANVA_REDIRECT_URI", "https://example.com/callback");
-    // No env tokens — force store path via mocked loadCanvaTokens
+    // Not on Vercel → local filesystem persistence allowed
+    vi.stubEnv("VERCEL", "");
     vi.resetModules();
 
-    vi.doMock("@/lib/canva/token-store", async () => {
-      const actual =
-        await vi.importActual<typeof import("@/lib/canva/token-store")>(
-          "@/lib/canva/token-store",
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          access_token: "new-access",
+          refresh_token: "new-refresh",
+          expires_in: 14400,
+          token_type: "Bearer",
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+
+    const oauth = await import("@/lib/canva/oauth");
+    oauth.resetCanvaRefreshGuardForTests();
+
+    const access = await oauth.getValidCanvaAccessToken();
+    expect(access).toBe("new-access");
+    expect(oauth.getCanvaRefreshAttemptCountForTests()).toBe(1);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("expired tokens auto-refresh via KV on Vercel", async () => {
+    const exp = Math.floor(Date.now() / 1000) - 120;
+    vi.stubEnv("VERCEL", "1");
+    vi.stubEnv("KV_REST_API_URL", "https://example-kv.upstash.io");
+    vi.stubEnv("KV_REST_API_TOKEN", "kv-token");
+    vi.stubEnv("CANVA_ACCESS_TOKEN", makeJwt(exp));
+    vi.stubEnv("CANVA_REFRESH_TOKEN", "refresh-placeholder");
+    vi.stubEnv("CANVA_CLIENT_ID", "client");
+    vi.stubEnv("CANVA_CLIENT_SECRET", "secret");
+    vi.stubEnv("CANVA_REDIRECT_URI", "https://example.com/callback");
+    vi.stubEnv("CREDENTIAL_ENCRYPTION_KEY", "test-encryption-key");
+    vi.resetModules();
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(
+      async (input, init) => {
+        const url = String(input);
+        if (url.includes("example-kv.upstash.io")) {
+          const body = typeof init?.body === "string" ? init.body : "";
+          if (body.includes('"GET"')) {
+            return new Response(JSON.stringify({ result: null }), {
+              status: 200,
+            });
+          }
+          // SET lock / SET tokens / DEL unlock
+          return new Response(JSON.stringify({ result: "OK" }), {
+            status: 200,
+          });
+        }
+        // Canva token endpoint
+        return new Response(
+          JSON.stringify({
+            access_token: "kv-new-access",
+            refresh_token: "kv-new-refresh",
+            expires_in: 14400,
+            token_type: "Bearer",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
         );
-      return {
-        ...actual,
-        loadCanvaTokens: vi.fn(async () => ({
-          accessToken: "stale-access",
-          refreshToken: "store-refresh",
-          expiresAt: Date.now() - 1_000,
-          source: "store" as const,
-          tokenType: "Bearer",
-        })),
-        saveCanvaTokens: vi.fn(async () => undefined),
-      };
-    });
+      },
+    );
+
+    const oauth = await import("@/lib/canva/oauth");
+    oauth.resetCanvaRefreshGuardForTests();
+
+    const access = await oauth.getValidCanvaAccessToken();
+    expect(access).toBe("kv-new-access");
+    expect(oauth.getCanvaRefreshAttemptCountForTests()).toBe(1);
+    expect(fetchSpy).toHaveBeenCalled();
+  });
+
+  it("multiple concurrent store refreshes share a single flight", async () => {
+    const exp = Math.floor(Date.now() / 1000) - 120;
+    vi.stubEnv("CANVA_ACCESS_TOKEN", makeJwt(exp));
+    vi.stubEnv("CANVA_REFRESH_TOKEN", "store-refresh");
+    vi.stubEnv("CANVA_CLIENT_ID", "client");
+    vi.stubEnv("CANVA_CLIENT_SECRET", "secret");
+    vi.stubEnv("CANVA_REDIRECT_URI", "https://example.com/callback");
+    vi.stubEnv("VERCEL", "");
+    vi.stubEnv("CREDENTIAL_ENCRYPTION_KEY", "test-encryption-key");
+    vi.resetModules();
 
     let resolveFetch!: (value: Response) => void;
     const fetchPromise = new Promise<Response>((resolve) => {
@@ -117,9 +223,9 @@ describe("Canva env token expiry", () => {
     const p2 = oauth.getValidCanvaAccessToken();
     const p3 = oauth.getValidCanvaAccessToken();
 
-    // Allow microtasks to start the single flight
-    await Promise.resolve();
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => {
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+    });
 
     resolveFetch(
       new Response(

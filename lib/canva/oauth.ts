@@ -1,6 +1,15 @@
 import "server-only";
 import { createHash, randomBytes } from "crypto";
-import { loadCanvaTokens, saveCanvaTokens } from "./token-store";
+import {
+  CANVA_REFRESH_LOCK_KV_KEY,
+  kvTryLock,
+  kvUnlock,
+} from "./kv-token-store";
+import {
+  canPersistCanvaTokenRotation,
+  loadCanvaTokens,
+  saveCanvaTokens,
+} from "./token-store";
 import {
   createEncryptedOauthState,
   parseEncryptedOauthState,
@@ -200,14 +209,19 @@ async function refreshCanvaAccessTokenSingleFlight(
 
 const ACCESS_TOKEN_SKEW_MS = 60_000;
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 /**
  * Returns a usable access token.
  *
- * Env-sourced tokens: use JWT `exp` from load; never auto-refresh.
- * If still valid (not within 60s of expiry), return as-is.
- * If expired, throw CANVA_REAUTH_REQUIRED (operator must reconnect).
+ * Auto-renews via Canva refresh_token when a durable store can persist the
+ * rotated refresh token (local file, or Vercel KV / Upstash Redis).
  *
- * Store-sourced tokens (local): may refresh once via single-flight.
+ * On Vercel without KV configured, expired tokens still require reconnect —
+ * burning a single-use refresh token with nowhere to save the replacement
+ * would permanently disconnect the integration.
  */
 export async function getValidCanvaAccessToken(): Promise<string> {
   const tokens = await loadCanvaTokens();
@@ -222,13 +236,21 @@ export async function getValidCanvaAccessToken(): Promise<string> {
     return tokens.accessToken;
   }
 
-  // PoC: env tokens must not auto-refresh (refresh tokens are single-use and
-  // cannot be persisted durably on Vercel).
-  if (tokens.source === "env") {
+  if (!canPersistCanvaTokenRotation()) {
     throw new CanvaAuthError(
       "CANVA_REAUTH_REQUIRED",
-      "Canva access token from env is expired or near expiry. Revisit /api/canva/connect with OAUTH_EXPORT_TOKENS=1, copy the new tokens into Vercel, then disable export.",
+      "Canva access token expired and no durable token store is configured for auto-renew. Add KV_REST_API_URL + KV_REST_API_TOKEN (or UPSTASH_REDIS_REST_*) to Vercel, reconnect once via /api/canva/connect, then tokens will auto-renew.",
     );
+  }
+
+  const lockOwned = await kvTryLock(CANVA_REFRESH_LOCK_KV_KEY, 25);
+  if (!lockOwned) {
+    // Another instance is rotating — wait, then use whatever landed in store.
+    await sleep(1_500);
+    const raced = await loadCanvaTokens();
+    if (raced && raced.expiresAt > Date.now() + ACCESS_TOKEN_SKEW_MS) {
+      return raced.accessToken;
+    }
   }
 
   try {
@@ -237,10 +259,19 @@ export async function getValidCanvaAccessToken(): Promise<string> {
     );
     return refreshed.accessToken;
   } catch (error) {
+    // Another instance may have already rotated the single-use refresh token.
+    const again = await loadCanvaTokens();
+    if (again && again.expiresAt > Date.now() + ACCESS_TOKEN_SKEW_MS) {
+      return again.accessToken;
+    }
     if (error instanceof CanvaAuthError) throw error;
     throw new CanvaAuthError(
       "CANVA_REAUTH_REQUIRED",
-      "Canva token refresh failed. Revisit /api/canva/connect and update Vercel env tokens.",
+      "Canva token refresh failed. Revisit /api/canva/connect so a fresh refresh token can be stored durably.",
     );
+  } finally {
+    if (lockOwned) {
+      await kvUnlock(CANVA_REFRESH_LOCK_KV_KEY);
+    }
   }
 }
